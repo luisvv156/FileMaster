@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/
+*.log
+data/file_history.db
+data/embeddings_cache.pkl
+ai/models/

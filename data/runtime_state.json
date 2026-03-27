@@ -1,0 +1,17 @@
+{
+  "pending_groups": [],
+  "duplicate_groups": [],
+  "unclassified": [],
+  "last_summary": {
+    "detected": 0,
+    "organized": 0,
+    "renamed": 0,
+    "unclassified": 0,
+    "duplicates": 0,
+    "precision": 0.0,
+    "duration_seconds": 0.0,
+    "folders": []
+  },
+  "agent_started_at": "",
+  "last_run": ""
+}
