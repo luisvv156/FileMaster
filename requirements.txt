@@ -2,4 +2,5 @@ customtkinter>=5.2,<6
 
 # Herramientas opcionales recomendadas a nivel sistema:
 # - pdftotext
-# - tesseract-ocr
+sentence-transformers==2.7.0
+pywebview==0.9.3

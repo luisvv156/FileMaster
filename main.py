@@ -1,14 +1,10 @@
 """Punto de entrada de FileMaster."""
 
-from config.logging_config import setup_logging
-from gui.app import FileMasterApp
+from gui.app import run_app
 
 
 def main() -> None:
-    """Inicia la aplicacion."""
-    setup_logging()
-    app = FileMasterApp()
-    app.run()
+    run_app()
 
 
 if __name__ == "__main__":

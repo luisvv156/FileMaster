@@ -1,152 +1,145 @@
-"""Aplicacion principal de FileMaster."""
+"""Aplicacion principal de FileMaster — pywebview."""
 
 from __future__ import annotations
 
-import queue
+import json
+import threading
+from pathlib import Path
 
-import customtkinter as ctk
+import webview
 
 from core.controller import FileMasterController
-from gui.components.common import WindowTitleBar, apply_window_icon, configure_windows_runtime
-from gui.components.sidebar import Sidebar
-from gui.screens.config_screen import ConfigScreen
-from gui.screens.duplicates_screen import DuplicatesScreen
-from gui.screens.groups_screen import GroupsScreen
-from gui.screens.main_panel import MainPanelScreen
-from gui.screens.manual_classify_screen import ManualClassifyScreen
-from gui.screens.summary_screen import SummaryScreen
-from gui.screens.welcome_screen import WelcomeScreen
-from gui.theme import (
-    COLORS,
-    SCREEN_NAV_STATE,
-    SHELL_PADDING,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
-    build_fonts,
-    setup_appearance,
-)
 
 
-class FileMasterApp:
-    def __init__(self) -> None:
-        setup_appearance()
-        configure_windows_runtime()
-        self.root = ctk.CTk()
-        self.fonts = build_fonts()
-        self._refresh_queue: queue.SimpleQueue[str] = queue.SimpleQueue()
-        self.controller = FileMasterController(notify_callback=self._enqueue_refresh)
-        self.current_screen = "welcome"
+# Ruta a la carpeta web
+WEB_DIR = Path(__file__).parent / "web"
 
-        self.root.title("FileMaster")
-        apply_window_icon(self.root)
-        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.root.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.root.resizable(False, False)
-        self.root.configure(fg_color=COLORS["window_bg"])
-        self.root.grid_rowconfigure(1, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.titlebar = WindowTitleBar(self.root, self.fonts)
-        self.titlebar.grid(row=0, column=0, sticky="ew")
+class FileMasterAPI:
+    """Bridge entre JavaScript y el controlador Python."""
 
-        self.body = ctk.CTkFrame(self.root, fg_color=COLORS["shell_bg"], corner_radius=0)
-        self.body.grid(row=1, column=0, sticky="nsew")
-        self.body.grid_rowconfigure(0, weight=1)
-        self.body.grid_columnconfigure(0, weight=1)
+    def __init__(self, controller: FileMasterController) -> None:
+        self._controller = controller
+        self._window: webview.Window | None = None
 
-        self.welcome_host = ctk.CTkFrame(self.body, fg_color=COLORS["shell_bg"], corner_radius=0)
-        self.welcome_host.grid(row=0, column=0, sticky="nsew")
-        self.welcome_host.grid_rowconfigure(0, weight=1)
-        self.welcome_host.grid_columnconfigure(0, weight=1)
+    def set_window(self, window: webview.Window) -> None:
+        self._window = window
 
-        self.shell_host = ctk.CTkFrame(self.body, fg_color=COLORS["shell_bg"], corner_radius=0)
-        self.shell_host.grid(row=0, column=0, sticky="nsew")
-        self.shell_host.grid_rowconfigure(0, weight=1)
-        self.shell_host.grid_columnconfigure(1, weight=1)
+    # ── Lectura de estado ──────────────────────────────────────────────────────
 
-        self.sidebar = Sidebar(self.shell_host, self.fonts, self.show_screen, active_key="main")
-        self.sidebar.grid(row=0, column=0, sticky="ns")
+    def snapshot(self) -> dict:
+        return self._controller.snapshot()
 
-        self.content = ctk.CTkFrame(self.shell_host, fg_color=COLORS["shell_bg"], corner_radius=0)
-        self.content.grid(row=0, column=1, sticky="nsew")
-        self.content.grid_rowconfigure(0, weight=1)
-        self.content.grid_columnconfigure(0, weight=1)
+    def has_configuration(self) -> bool:
+        return self._controller.has_configuration()
 
-        self.screen_container = ctk.CTkFrame(self.content, fg_color=COLORS["shell_bg"], corner_radius=0)
-        self.screen_container.grid(row=0, column=0, sticky="nsew", padx=SHELL_PADDING, pady=SHELL_PADDING)
-        self.screen_container.grid_rowconfigure(0, weight=1)
-        self.screen_container.grid_columnconfigure(0, weight=1)
+    def manual_categories(self) -> list[str]:
+        return self._controller.manual_categories()
 
-        self.welcome_screen = WelcomeScreen(self.welcome_host, self.fonts, self.controller, self)
-        self.welcome_screen.grid(row=0, column=0, sticky="nsew")
+    # ── Acciones ───────────────────────────────────────────────────────────────
 
-        self.screens = {
-            "config": ConfigScreen(self.screen_container, self.fonts, self.controller, self),
-            "groups": GroupsScreen(self.screen_container, self.fonts, self.controller, self),
-            "main": MainPanelScreen(self.screen_container, self.fonts, self.controller, self),
-            "summary": SummaryScreen(self.screen_container, self.fonts, self.controller, self),
-            "manual": ManualClassifyScreen(self.screen_container, self.fonts, self.controller, self),
-            "duplicates": DuplicatesScreen(self.screen_container, self.fonts, self.controller, self),
-        }
+    def update_config(self, watch_folder: str, auto_rename: bool, detect_duplicates: bool) -> None:
+        self._controller.update_config(watch_folder, auto_rename, detect_duplicates)
 
-        for screen in self.screens.values():
-            screen.grid(row=0, column=0, sticky="nsew")
+    def analyze_initial(self) -> list:
+        return self._controller.analyze_initial()
 
-        initial_screen = "welcome"
-        snapshot = self.controller.snapshot()
-        if snapshot.get("pending_groups"):
-            initial_screen = "groups"
-        elif self.controller.has_configuration():
-            initial_screen = "main"
-        self.show_screen(initial_screen)
-        self.root.after(250, self._process_refresh_queue)
+    def confirm_groups(self, mapping: dict) -> dict:
+        return self._controller.confirm_groups(mapping)
 
-    def _enqueue_refresh(self) -> None:
-        self._refresh_queue.put("refresh")
+    def organize_now(self) -> dict:
+        return self._controller.organize_now()
 
-    def _process_refresh_queue(self) -> None:
-        should_refresh = False
-        try:
-            while True:
-                self._refresh_queue.get_nowait()
-                should_refresh = True
-        except queue.Empty:
-            pass
+    def toggle_agent(self) -> None:
+        self._controller.toggle_agent()
 
-        if should_refresh:
-            self.refresh_current_screen()
+    def manual_classify(self, file_path: str, category_name: str, new_folder_name: str = "") -> None:
+        self._controller.manual_classify(file_path, category_name, new_folder_name)
 
-        try:
-            self.root.after(250, self._process_refresh_queue)
-        except RuntimeError:
-            return
+    def delete_duplicates(self, selected_paths: list) -> None:
+        self._controller.delete_duplicates(selected_paths)
 
-    def refresh_current_screen(self) -> None:
-        if self.current_screen == "welcome":
-            self.welcome_screen.refresh()
-            return
-        screen = self.screens.get(self.current_screen)
-        if screen is not None:
-            screen.refresh()
+    def restore_duplicates(self, selected_paths: list) -> None:
+        self._controller.restore_duplicates(selected_paths)
 
-    def show_screen(self, key: str) -> None:
-        self.current_screen = key
-        if key == "welcome":
-            self.welcome_host.tkraise()
-            self.sidebar.set_active(None)
-            self.welcome_screen.refresh()
-            return
+    def stop_agent(self) -> None:
+        self._controller.stop_agent()
 
-        self.shell_host.tkraise()
-        screen = self.screens.get(key, self.screens["main"])
-        screen.tkraise()
-        self.sidebar.set_active(SCREEN_NAV_STATE.get(key))
-        screen.refresh()
+    # ── Navegación ─────────────────────────────────────────────────────────────
 
-    def _on_close(self) -> None:
-        self.controller.stop_agent()
-        self.root.destroy()
+    def navigate(self, screen: str) -> None:
+        """Navega a una pantalla desde Python (ej: callback del watcher)."""
+        if self._window:
+            self._window.evaluate_js(f"window.app.navigate('{screen}')")
 
-    def run(self) -> None:
-        self.root.mainloop()
+    def push_snapshot(self) -> None:
+        """Empuja el snapshot actualizado a la UI (llamado por el watcher)."""
+        if self._window:
+            data = json.dumps(self._controller.snapshot(), ensure_ascii=False)
+            self._window.evaluate_js(f"window.app.onSnapshotPush({data})")
+
+    # ── Utilidades del sistema ─────────────────────────────────────────────────
+
+    def open_folder_dialog(self) -> str | None:
+        """Abre el diálogo nativo del SO para seleccionar carpeta."""
+        if self._window:
+            result = self._window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                allow_multiple=False,
+            )
+            if result:
+                return result[0]
+        return None
+
+
+def _notify_factory(api: FileMasterAPI):
+    """Crea el callback que el controller llama cuando hay cambios."""
+    def _notify():
+        threading.Thread(target=api.push_snapshot, daemon=True).start()
+    return _notify
+
+
+def run_app() -> None:
+    from config.logging_config import setup_logging
+    setup_logging()
+
+    # Controller
+    api = FileMasterAPI.__new__(FileMasterAPI)
+
+    controller = FileMasterController(notify_callback=lambda: api.push_snapshot())
+    api.__init__(controller)
+
+    # Detectar pantalla inicial
+    initial_screen = "welcome"
+    snapshot = controller.snapshot()
+    if snapshot.get("pending_groups"):
+        initial_screen = "groups"
+    elif controller.has_configuration():
+        initial_screen = "main"
+
+    index_path = str(WEB_DIR / "index.html")
+
+    window = webview.create_window(
+        title="FileMaster",
+        url=f"file:///{index_path.replace(chr(92), '/')}",
+        js_api=api,
+        width=1100,
+        height=680,
+        min_size=(900, 580),
+        background_color="#0f1219",
+        text_select=False,
+    )
+
+    api.set_window(window)
+
+    def on_loaded():
+        window.evaluate_js(f"window.app.navigate('{initial_screen}')")
+
+    window.events.loaded += on_loaded
+
+    def on_closing():
+        controller.stop_agent()
+
+    window.events.closing += on_closing
+
+    webview.start(debug=False)

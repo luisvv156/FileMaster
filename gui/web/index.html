@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FileMaster</title>
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+<div id="root">
+  <div id="body">
+
+    <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
+    <nav id="sidebar" style="display:none">
+      <div style="padding:12px 4px 16px">
+        <div style="display:flex;align-items:center;gap:8px;padding:0 8px">
+          <div style="width:16px;height:16px;background:#f4c04a;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;flex-shrink:0">📁</div>
+          <span style="font-size:12px;font-weight:600;color:var(--brand)">FileMaster</span>
+        </div>
+      </div>
+      <div class="divider" style="margin:0 0 10px"></div>
+      <button class="nav-item" data-screen="main"       onclick="window.app.navigate('main')"><span class="nav-icon">🏠</span>Inicio</button>
+      <button class="nav-item" data-screen="config"     onclick="window.app.navigate('config')"><span class="nav-icon">📂</span>Config</button>
+      <button class="nav-item" data-screen="summary"    onclick="window.app.navigate('summary')"><span class="nav-icon">🕐</span>Historial</button>
+      <button class="nav-item" data-screen="duplicates" onclick="window.app.navigate('duplicates')"><span class="nav-icon">⊗</span>Duplicados</button>
+      <div class="nav-spacer"></div>
+      <div class="divider" style="margin:0 0 10px"></div>
+      <button class="nav-item" data-screen="manual"     onclick="window.app.navigate('manual')"><span class="nav-icon">⚙</span>Ajustes</button>
+    </nav>
+
+    <div id="content">
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           WELCOME
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-welcome" class="screen">
+        <div class="welcome-left">
+          <div class="pill" style="align-self:flex-start;margin-bottom:20px">
+            <span class="pill-dot"></span>Aplicación de escritorio · IA 100% local
+          </div>
+          <div style="font-size:32px;font-weight:700;color:var(--text);line-height:1.2">Organiza tus archivos</div>
+          <div style="font-size:32px;font-weight:700;color:var(--primary-soft);line-height:1.2;margin-bottom:14px">con inteligencia artificial</div>
+          <p style="font-size:12px;color:var(--text-secondary);line-height:1.7;margin-bottom:8px;max-width:420px">FileMaster monitorea tu carpeta en segundo plano, analiza cada documento y lo clasifica automáticamente. Sin esfuerzo. Sin desorden.</p>
+          <div class="divider"></div>
+          <div class="section-label"><span class="section-dot" style="background:var(--primary)"></span>Cómo funciona</div>
+          <div class="card step-row" style="margin-bottom:8px"><div class="step-bubble" style="background:#0f1f42;border-color:#1a3060;color:var(--primary)">1</div><span style="font-size:12px;color:var(--text)">Indica la carpeta que deseas organizar</span></div>
+          <div class="card step-row" style="margin-bottom:8px"><div class="step-bubble" style="background:var(--success-bg);border-color:var(--success-border);color:var(--success)">2</div><span style="font-size:12px;color:var(--text)">La IA analiza el contenido y crea las carpetas automáticamente</span></div>
+          <div class="card step-row" style="margin-bottom:8px"><div class="step-bubble" style="background:var(--warning-bg);border-color:var(--warning-border);color:var(--warning)">3</div><span style="font-size:12px;font-weight:600;color:var(--primary-light)">El agente monitorea en segundo plano y organiza al instante</span></div>
+          <div class="divider"></div>
+          <div style="display:flex;gap:10px;margin-bottom:18px">
+            <button class="btn btn-primary" onclick="window.app.navigate('config')">Configurar mi carpeta →</button>
+            <button id="btn-open-panel" class="btn btn-secondary" onclick="window.app.navigate('main')" style="display:none">Abrir panel</button>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <span class="tag">IA con DBSCAN</span><span class="tag">Observador en tiempo real</span><span class="tag">Renombrado opcional</span><span class="tag">Papelera de duplicados</span><span class="tag">100% local</span>
+          </div>
+        </div>
+
+        <div class="welcome-right">
+          <div class="preview-card">
+            <div class="preview-chrome">
+              <span style="font-size:10px;color:var(--brand);font-weight:500;flex:1">FileMaster</span>
+              <div style="display:flex;gap:5px">
+                <div style="width:10px;height:10px;border-radius:50%;background:#28c840"></div>
+                <div style="width:10px;height:10px;border-radius:50%;background:#febc2e"></div>
+                <div style="width:10px;height:10px;border-radius:50%;background:#ff5f57"></div>
+              </div>
+            </div>
+            <div class="preview-body">
+              <div class="status-badge"><div id="w-agent-dot" class="status-dot"></div><span id="w-agent-label" class="status-text">Agente activo</span></div>
+              <div id="w-status-msg" style="font-size:9px;color:var(--text-muted);margin-bottom:10px">Listo para comenzar.</div>
+              <div class="divider" style="margin:4px 0 10px"></div>
+              <div class="section-label" style="margin-bottom:8px"><span class="section-dot" style="background:var(--warning)"></span>Configuración activa</div>
+              <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:10px">
+                <div style="width:24px;height:24px;background:var(--warning-bg);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">📁</div>
+                <div><div style="font-size:8px;color:var(--text-muted)">Carpeta origen</div><div id="w-folder" style="font-size:11px;font-weight:600;color:var(--text)">Sin configurar</div></div>
+              </div>
+              <div style="display:flex;gap:6px;margin-bottom:10px">
+                <div class="stat-card"><div class="stat-bar" style="background:var(--primary)"></div><div class="stat-label">Organizados</div><div id="w-organized" class="stat-value" style="color:var(--primary)">0</div></div>
+                <div class="stat-card"><div class="stat-bar" style="background:var(--success)"></div><div class="stat-label">Precisión</div><div id="w-precision" class="stat-value" style="color:var(--success)">0%</div></div>
+                <div class="stat-card"><div class="stat-bar" style="background:var(--warning)"></div><div class="stat-label">Duplicados</div><div id="w-dupes" class="stat-value" style="color:var(--warning)">0</div></div>
+              </div>
+              <div class="divider" style="margin:4px 0 10px"></div>
+              <div class="section-label" style="margin-bottom:8px"><span class="section-dot" style="background:var(--success)"></span>Últimos archivos organizados</div>
+              <div id="w-recent-list"></div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /welcome -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           MAIN PANEL
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-main" class="screen" style="flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div>
+            <div style="font-size:19px;font-weight:700;color:var(--text)">Panel principal</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Estado del agente y configuración activa</div>
+          </div>
+          <div style="flex:1"></div>
+          <div class="status-badge" style="margin:0"><div id="m-agent-dot" class="status-dot"></div><span id="m-agent-label" class="status-text">Activo</span></div>
+        </div>
+
+        <div id="m-pending-banner" style="display:none" class="info-banner">
+          <div class="banner-icon">🤖</div>
+          <div style="flex:1"><div id="m-pending-text" style="font-size:13px;font-weight:600;color:var(--text)"></div><div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Confirma los nombres sugeridos por la IA antes de organizar.</div></div>
+          <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="window.app.navigate('groups')">Revisar grupos →</button>
+        </div>
+
+        <div id="m-status-msg" style="font-size:10px;color:var(--text-muted);display:none"></div>
+
+        <div style="display:grid;grid-template-columns:60fr 40fr;gap:10px">
+          <div class="card" style="padding:0;overflow:hidden">
+            <div style="padding:12px 16px 8px;font-size:9px;font-weight:700;color:var(--text-muted);letter-spacing:.08em">CONFIGURACIÓN ACTIVA</div>
+            <div id="m-config-rows"></div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px 16px;text-align:center">
+            <div id="m-agent-circle" style="width:52px;height:52px;border-radius:50%;background:var(--success-bg);border:1px solid var(--success);display:flex;align-items:center;justify-content:center;font-size:22px">🤖</div>
+            <div id="m-agent-status" style="font-size:12px;font-weight:600;color:var(--success)">Monitoreando activamente</div>
+            <div id="m-agent-last" style="font-size:10px;color:var(--text-muted)"></div>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button id="btn-toggle-agent" class="btn btn-secondary" style="padding:6px 12px;font-size:11px" onclick="window.app.doToggleAgent()">⏸ Pausar</button>
+              <button id="btn-organize" class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="window.app.doOrganizeNow()">⚡ Organizar</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+          <div class="stat-card"><div class="stat-bar" style="background:var(--primary)"></div><div class="stat-label">Total organizados</div><div id="m-organized" class="stat-value" style="color:var(--primary)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--success)"></div><div class="stat-label">Precisión promedio</div><div id="m-precision" class="stat-value" style="color:var(--success)">0%</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--warning)"></div><div class="stat-label">Carpetas creadas</div><div id="m-folders" class="stat-value" style="color:var(--warning)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--danger)"></div><div class="stat-label">Duplicados</div><div id="m-dupes" class="stat-value" style="color:var(--danger)">0</div></div>
+        </div>
+
+        <div class="card" style="flex:1;min-height:0;overflow-y:auto">
+          <div class="section-label" style="margin-bottom:10px">
+            <span class="section-dot" style="background:var(--success)"></span>Últimos archivos organizados
+            <span id="m-recent-count" style="margin-left:auto;font-size:9px;color:var(--text-muted)"></span>
+          </div>
+          <div id="m-recent-list"></div>
+        </div>
+      </div><!-- /main -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           CONFIG
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-config" class="screen" style="flex-direction:column;gap:14px">
+        <div>
+          <div style="font-size:19px;font-weight:700;color:var(--text)">Configuración inicial</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Indica la carpeta a organizar y ajusta las opciones</div>
+        </div>
+        <div id="cfg-status" style="display:none" class="info-banner">
+          <div class="banner-icon">✦</div>
+          <span id="cfg-status-text" style="font-size:12px;color:var(--text)"></span>
+        </div>
+        <div style="display:grid;grid-template-columns:62fr 38fr;gap:12px;flex:1;min-height:0">
+          <div style="display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+            <div class="card">
+              <div class="section-label" style="margin-bottom:10px"><span class="section-dot" style="background:var(--warning)"></span>Carpeta a monitorear</div>
+              <div style="display:flex;gap:8px;margin-bottom:10px">
+                <input id="cfg-folder-input" type="text" placeholder="C:/Users/tu-usuario/Downloads"
+                  style="flex:1;background:var(--bg-field);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:var(--font);font-size:12px;outline:none"
+                  oninput="window.app.updateFolderDisplay()" />
+                <button class="btn btn-secondary" style="padding:7px 12px;font-size:11px;white-space:nowrap" onclick="window.app.doPickFolder()">📂 Explorar</button>
+              </div>
+              <p style="font-size:10px;color:var(--text-muted);margin-bottom:12px">El agente monitoreará esta carpeta y organizará su contenido automáticamente.</p>
+              <div class="section-label" style="margin-bottom:8px"><span class="section-dot" style="background:var(--primary)"></span>Accesos rápidos</div>
+              <div id="cfg-shortcuts" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px"></div>
+              <div style="background:var(--bg-card);border:1px solid var(--border-soft);border-radius:9px;padding:10px 14px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                  <span style="font-size:9px;font-weight:700;color:var(--text-muted);letter-spacing:.08em">CARPETA ACTUAL</span>
+                  <span id="cfg-folder-badge" class="tag" style="font-size:9px">Sin seleccionar</span>
+                </div>
+                <div id="cfg-folder-display" style="font-size:11px;color:var(--text)">Todavía no has elegido ninguna carpeta.</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="section-label" style="margin-bottom:14px"><span class="section-dot" style="background:var(--primary)"></span>Opciones de organización</div>
+              <div class="toggle-row">
+                <div><div style="font-size:13px;font-weight:500;color:var(--text)">Renombrado automático de archivos</div><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">La IA sugerirá nombres descriptivos para cada archivo</div></div>
+                <label class="toggle-switch"><input id="cfg-rename" type="checkbox" checked><span class="toggle-track"></span></label>
+              </div>
+              <div id="cfg-rename-preview" style="background:var(--bg-card);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;margin:10px 0">
+                <div style="font-size:9px;font-weight:700;color:var(--text-muted);letter-spacing:.08em;margin-bottom:8px">VISTA PREVIA DEL RENOMBRADO</div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:4px"><span style="color:var(--danger)">SKDJH-KEFHE.pdf</span><span style="color:var(--success)">ia_reporte_2026-03-26.pdf</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:10px"><span style="color:var(--danger)">trabajo_final_v3.docx</span><span style="color:var(--success)">base_de_datos_indices.docx</span></div>
+              </div>
+              <div class="toggle-row">
+                <div><div style="font-size:13px;font-weight:500;color:var(--text)">Detección de duplicados</div><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">Los duplicados se moverán a una carpeta especial para revisión</div></div>
+                <label class="toggle-switch"><input id="cfg-dupes" type="checkbox" checked><span class="toggle-track"></span></label>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-secondary" onclick="window.app.navigate('welcome')">Cancelar</button>
+              <button class="btn btn-primary" onclick="window.app.doSaveAndAnalyze()">Analizar carpeta y continuar →</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:12px;overflow-y:auto">
+            <div class="card">
+              <div class="section-label" style="margin-bottom:12px"><span class="section-dot" style="background:var(--success)"></span>Así funcionará FileMaster</div>
+              <div class="guide-step"><div class="step-bubble-sm" style="background:var(--primary)">1</div><div><div style="font-size:12px;font-weight:600;color:var(--text)">Analiza</div><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">Lee el contenido de tus documentos para detectar grupos temáticos.</div></div></div>
+              <div class="guide-step"><div class="step-bubble-sm" style="background:var(--success)">2</div><div><div style="font-size:12px;font-weight:600;color:var(--text)">Propone</div><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">Sugiere carpetas y nombres antes de mover tus archivos.</div></div></div>
+              <div class="guide-step"><div class="step-bubble-sm" style="background:var(--warning)">3</div><div><div style="font-size:12px;font-weight:600;color:var(--text)">Monitorea</div><div style="font-size:10px;color:var(--text-secondary);margin-top:2px">Se queda observando y organiza nuevos archivos automáticamente.</div></div></div>
+            </div>
+            <div class="card">
+              <div class="section-label" style="margin-bottom:10px"><span class="section-dot" style="background:var(--info)"></span>Soporte y resultado</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"><span class="tag">TXT</span><span class="tag">DOCX</span><span class="tag">PPTX</span><span class="tag">PDF</span><span class="tag">OCR</span><span class="tag">Duplicados</span></div>
+              <div style="background:var(--bg-card);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px">
+                <div style="font-size:9px;font-weight:700;color:var(--text-muted);letter-spacing:.08em;margin-bottom:8px">DESPUÉS DEL ANÁLISIS</div>
+                <div class="result-row">📁 <span style="font-size:11px;color:var(--text-secondary)">Carpetas temáticas generadas</span></div>
+                <div class="result-row">✦ <span style="font-size:11px;color:var(--text-secondary)">Renombres descriptivos sugeridos</span></div>
+                <div class="result-row">⊗ <span style="font-size:11px;color:var(--text-secondary)">Duplicados enviados a revisión</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /config -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           GROUPS
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-groups" class="screen" style="flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div>
+            <div style="font-size:19px;font-weight:700;color:var(--text)">Grupos detectados por la IA</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Revisa y confirma los nombres antes de organizar</div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="display:flex;gap:8px">
+            <div class="mini-stat"><div class="mini-stat-label">Documentos</div><div id="grp-total-files" class="mini-stat-value">0</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Grupos</div><div id="grp-total-groups" class="mini-stat-value">0</div></div>
+            <div class="mini-stat"><div class="mini-stat-label">Método</div><div class="mini-stat-value" style="font-size:11px">DBSCAN</div></div>
+          </div>
+        </div>
+        <div class="info-banner">
+          <div class="banner-icon">🤖</div>
+          <div><div id="grp-banner-text" style="font-size:13px;font-weight:600;color:var(--text)">Análisis completado</div><div style="font-size:11px;color:var(--text-secondary);margin-top:2px">No se moverá nada todavía. Puedes modificar los nombres sugeridos antes de confirmar.</div></div>
+        </div>
+        <div id="grp-list" style="display:grid;gap:10px;flex:1;overflow-y:auto;align-content:start"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="window.app.navigate('config')">← Regresar</button>
+          <button class="btn btn-primary" onclick="window.app.doConfirmGroups()">Confirmar y organizar →</button>
+        </div>
+      </div><!-- /groups -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           SUMMARY
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-summary" class="screen" style="flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div>
+            <div style="font-size:19px;font-weight:700;color:var(--text)">Resumen de organización</div>
+            <div id="sum-subtitle" style="font-size:11px;color:var(--text-secondary);margin-top:2px">—</div>
+          </div>
+          <div style="flex:1"></div>
+          <div class="status-badge" style="margin:0"><div class="status-dot"></div><span class="status-text">Agente activo</span></div>
+        </div>
+        <div style="background:var(--success-bg);border:1px solid var(--success);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:14px">
+          <div style="width:30px;height:30px;background:var(--bg-card-alt);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">✓</div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:var(--text)">Organización completada — el agente continúa activo</div>
+            <div id="sum-status-msg" style="font-size:11px;color:var(--text-secondary);margin-top:2px">Los archivos fueron clasificados correctamente.</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div id="sum-speed" style="font-size:18px;font-weight:700;color:var(--success)">0s</div>
+            <div id="sum-precision-val" style="font-size:18px;font-weight:700;color:var(--primary-light)">0%</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+          <div class="stat-card"><div class="stat-bar" style="background:var(--primary)"></div><div class="stat-label">Detectados</div><div id="sum-detected" class="stat-value" style="color:var(--primary)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--success)"></div><div class="stat-label">Organizados</div><div id="sum-organized" class="stat-value" style="color:var(--success)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--primary)"></div><div class="stat-label">Renombrados</div><div id="sum-renamed" class="stat-value" style="color:var(--primary)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--warning)"></div><div class="stat-label">Sin clasificar</div><div id="sum-unclassified" class="stat-value" style="color:var(--warning)">0</div></div>
+          <div class="stat-card"><div class="stat-bar" style="background:var(--danger)"></div><div class="stat-label">Duplicados</div><div id="sum-dupes" class="stat-value" style="color:var(--danger)">0</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:52fr 48fr;gap:12px;flex:1;min-height:0">
+          <div class="card" style="overflow-y:auto">
+            <div class="section-label" style="margin-bottom:10px"><span class="section-dot" style="background:var(--warning)"></span>Carpetas creadas por la IA<span id="sum-folders-count" style="margin-left:auto;font-size:9px;color:var(--text-muted)"></span></div>
+            <div id="sum-folders"></div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;overflow-y:auto">
+            <div class="section-label" style="margin-bottom:10px"><span class="section-dot" style="background:var(--danger)"></span>Archivos no identificados<span id="sum-unclassified-count" style="margin-left:auto;font-size:9px;color:var(--text-muted)"></span></div>
+            <div id="sum-unclassified-list"></div>
+            <div style="flex:1"></div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="btn btn-primary" style="flex:1;font-size:11px;padding:8px" onclick="window.app.navigate('manual')">Clasificar manualmente →</button>
+              <button class="btn btn-secondary" style="font-size:11px;padding:8px" onclick="window.app.navigate('duplicates')">Ver duplicados</button>
+            </div>
+          </div>
+        </div>
+      </div><!-- /summary -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           DUPLICATES
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-duplicates" class="screen" style="flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div>
+            <div style="font-size:19px;font-weight:700;color:var(--text)">Papelera de duplicados</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Revisa y decide qué eliminar — la IA no borra nada sin tu confirmación</div>
+          </div>
+          <div style="flex:1"></div>
+          <span id="dup-badge" class="tag" style="color:var(--warning);border-color:var(--warning)">0 grupos · 0 duplicados</span>
+        </div>
+        <div style="background:var(--warning-bg);border:1px solid var(--warning);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px">
+          <div style="font-size:18px;flex-shrink:0">⚠</div>
+          <div><div style="font-size:13px;font-weight:600;color:var(--text)">Se detectaron archivos duplicados en tu carpeta</div><div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Puedes restaurarlos o eliminarlos. Ningún archivo se borra automáticamente.</div></div>
+        </div>
+        <div class="section-label"><span class="section-dot" style="background:var(--warning)"></span>Grupos de archivos duplicados</div>
+        <div id="dup-list" style="flex:1;overflow-y:auto"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span id="dup-selected-count" style="font-size:11px;color:var(--text-muted)">0 archivos seleccionados</span>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-secondary" onclick="window.app.doRestoreDuplicates()">Restaurar selección</button>
+            <button class="btn" style="background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger);font-size:13px;padding:8px 16px;border-radius:10px;font-weight:600;cursor:pointer" onclick="window.app.doDeleteDuplicates()">Eliminar seleccionados</button>
+          </div>
+        </div>
+      </div><!-- /duplicates -->
+
+
+      <!-- ══════════════════════════════════════════════════════════════════
+           MANUAL CLASSIFY
+      ══════════════════════════════════════════════════════════════════ -->
+      <div id="screen-manual" class="screen" style="flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div>
+            <div style="font-size:19px;font-weight:700;color:var(--text)">Clasificación manual</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Indica dónde debe ir cada archivo que la IA no pudo clasificar</div>
+          </div>
+          <div style="flex:1"></div>
+          <span id="man-pending-badge" class="tag">Pendientes: 0</span>
+        </div>
+        <div style="display:grid;grid-template-columns:34fr 66fr;gap:12px;flex:1;min-height:0">
+          <div class="card" style="display:flex;flex-direction:column;overflow:hidden">
+            <div class="section-label" style="margin-bottom:10px"><span class="section-dot" style="background:var(--warning)"></span>Archivos sin clasificar</div>
+            <div id="man-file-list" style="flex:1;overflow-y:auto"></div>
+          </div>
+          <div id="man-detail" class="card" style="display:flex;flex-direction:column;overflow-y:auto">
+            <div style="font-size:13px;color:var(--text-secondary);text-align:center;padding:40px 0">Selecciona un archivo de la lista</div>
+          </div>
+        </div>
+      </div><!-- /manual -->
+
+    </div><!-- /content -->
+  </div><!-- /body -->
+</div><!-- /root -->
+<script src="js/bridge.js"></script>
+</body>
+</html>
