@@ -49,18 +49,14 @@ LOG_FILE_PATH = LOG_DIR / "filemaster.log"
 
 DEFAULT_DUPLICATES_FOLDER_NAME = "_Duplicados"
 WATCH_INTERVAL_SECONDS = 3.0
-DEFAULT_SIMILARITY_THRESHOLD = 0.26
+DEFAULT_SIMILARITY_THRESHOLD = 0.92
+DEFAULT_COSINE_THRESHOLD = 0.75       # Similitud coseno para classifier.py
 
 SUPPORTED_TEXT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".csv",
-    ".json",
-    ".log",
-    ".py",
-    ".docx",
-    ".pptx",
-    ".pdf",
+    ".txt", ".md", ".csv", ".json", ".log", ".py",
+    ".docx", ".pptx", ".pdf",
+    ".xlsx", ".xls",          # ← añadir documentos de hoja de cálculo
+    ".odt", ".odp", ".ods",   # ← formatos LibreOffice (comunes en universitarios)
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
@@ -70,6 +66,7 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 class UserConfig:
     watch_folder: str = ""
     auto_rename: bool = True
+    auto_organize: bool = True
     detect_duplicates: bool = True
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
 
@@ -81,8 +78,15 @@ class UserConfig:
     def watch_path(self) -> Path | None:
         if not self.is_configured:
             return None
-        return Path(self.watch_folder).expanduser()
+        p = Path(self.watch_folder).expanduser()
+        return p if p.exists() else None   # ← retorna None si la ruta ya no existe
 
+def reset_user_config() -> None:
+    """Restaura la configuración a valores por defecto.
+    
+    Llamado desde la pantalla de configuración avanzada de la GUI.
+    """
+    save_user_config(UserConfig())
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,16 +131,16 @@ def load_user_config() -> UserConfig:
         return UserConfig()
 
     threshold = float(payload.get("similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD))
-    if threshold < 0.1 or threshold > 0.65:
+    if threshold < 0.1 or threshold > 1.0:
         threshold = DEFAULT_SIMILARITY_THRESHOLD
 
     return UserConfig(
         watch_folder=str(payload.get("watch_folder", "")),
         auto_rename=bool(payload.get("auto_rename", True)),
+        auto_organize=bool(payload.get("auto_organize", True)),   # ← añadir
         detect_duplicates=bool(payload.get("detect_duplicates", True)),
         similarity_threshold=threshold,
     )
-
 
 def save_user_config(config: UserConfig) -> None:
     ensure_data_files()
