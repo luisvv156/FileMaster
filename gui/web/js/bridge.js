@@ -14,6 +14,18 @@ window.app = (() => {
   // ── Utilidades ─────────────────────────────────────────────────────────────
   const el = id => document.getElementById(id);
 
+  function showLoading(title, subtitle) {
+    const overlay = document.getElementById("loading-overlay");
+    if (!overlay) return;
+    overlay.querySelector("#loading-title").textContent = title;
+    overlay.querySelector("#loading-subtitle").textContent = subtitle;
+    overlay.style.display = "flex";
+  }
+
+  function hideLoading() {
+    el("loading-overlay").style.display = "none";
+  }
+
   async function api(method, ...args) {
     return await window.pywebview.api[method](...args);
   }
@@ -194,7 +206,7 @@ window.app = (() => {
 
     // Folder input (no pisar si el usuario está escribiendo)
     const inp = el("cfg-folder-input");
-    if (inp && !inp._focused) inp.value = config.watch_folder || "";
+    if (inp && !inp._focused) inp.value = config.watch_folder || inp.value || "";
     inp.addEventListener("focus", () => inp._focused = true);
     inp.addEventListener("blur",  () => inp._focused = false);
 
@@ -212,7 +224,6 @@ window.app = (() => {
         ["Descargas", "Downloads"],
         ["Documentos", "Documents"],
         ["Escritorio", "Desktop"],
-        ["Usuario",    ""],
       ];
       shortcutsEl.innerHTML = shortcuts.map(([label, folder]) => {
         const path = folder
@@ -476,15 +487,19 @@ window.app = (() => {
 
   // ── Acciones ───────────────────────────────────────────────────────────────
   async function doOrganizeNow() {
-    const btn = el("btn-organize");
-    if (btn) { btn.disabled = true; btn.textContent = "Organizando..."; }
-    await api("organize_now");
-    if (btn) { btn.disabled = false; btn.textContent = "⚡ Organizar"; }
-    const snap = await refreshSnapshot();
-    if (snap.pending_groups?.length > 0) navigate("groups");
-    else navigate("summary");
+    el("loading-overlay").style.display = "flex";
+    el("loading-title").textContent = "Organizando archivos...";
+    el("loading-subtitle").textContent = "La IA está clasificando tus documentos";
+    await new Promise(r => setTimeout(r, 100));
+    try {
+      await api("organize_now");
+      const snap = await refreshSnapshot();
+      if (snap.pending_groups?.length > 0) navigate("groups");
+      else navigate("summary");
+    } finally {
+      el("loading-overlay").style.display = "none";
+    }
   }
-
   async function doToggleAgent() {
     await api("toggle_agent");
     await refreshSnapshot();
@@ -495,7 +510,6 @@ window.app = (() => {
     const folder = await api("open_folder_dialog");
     if (folder) setFolder(folder);
   }
-
   async function doSaveAndAnalyze() {
     const folder = el("cfg-folder-input")?.value?.trim() || "";
     if (!folder) {
@@ -504,16 +518,25 @@ window.app = (() => {
     }
     const rename = el("cfg-rename")?.checked ?? true;
     const dupes  = el("cfg-dupes")?.checked  ?? true;
-    await api("update_config", folder, rename, dupes);
-    const btn = document.querySelector("#screen-config .btn-primary");
-    if (btn) { btn.disabled = true; btn.textContent = "Analizando..."; }
-    await api("analyze_initial");
-    if (btn) { btn.disabled = false; btn.textContent = "Analizar carpeta y continuar →"; }
-    const snap = await refreshSnapshot();
-    if (snap.pending_groups?.length > 0) navigate("groups");
-    else navigate("main");
-  }
 
+    // Mostrar overlay PRIMERO, antes de cualquier llamada a Python
+    el("loading-overlay").style.display = "flex";
+    el("loading-title").textContent = "Analizando carpeta...";
+    el("loading-subtitle").textContent = "La IA está leyendo el contenido de tus documentos";
+    
+    // Esperar 2 frames para garantizar que el browser pinte el overlay
+    await new Promise(r => setTimeout(r, 150));
+
+    try {
+      await api("update_config", folder, rename, dupes);
+      await api("analyze_initial");
+      const snap = await refreshSnapshot();
+      if (snap.pending_groups?.length > 0) navigate("groups");
+      else navigate("main");
+    } finally {
+      el("loading-overlay").style.display = "none";
+    }
+  }
   async function doConfirmGroups() {
     const groups = (_snapshot?.pending_groups || []);
     const mapping = {};
@@ -521,8 +544,16 @@ window.app = (() => {
       const inp = el(`grp-name-${g.group_id}`);
       if (inp) mapping[g.group_id] = inp.value.trim();
     });
-    await api("confirm_groups", mapping);
-    navigate("summary");
+    el("loading-overlay").style.display = "flex";
+    el("loading-title").textContent = "Organizando archivos...";
+    el("loading-subtitle").textContent = "Moviendo y renombrando según los grupos confirmados";
+    await new Promise(r => setTimeout(r, 100));
+    try {
+      await api("confirm_groups", mapping);
+      navigate("summary");
+    } finally {
+      el("loading-overlay").style.display = "none";
+    }
   }
 
   async function doRestoreDuplicates() {

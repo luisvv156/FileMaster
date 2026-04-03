@@ -211,8 +211,9 @@ class DuplicateGroup:
     """Grupo de archivos duplicados o muy similares."""
     group_id: str
     title: str
-    mode: str         # "exact" | "similar"
     items: list[DuplicateItem]
+    mode: str = "exact"   # ✅ tipo str, default "exact"
+    reason: str = ""  # ✅ campo nuevo — descripción del motivo de duplicado
 
     @property
     def item_count(self) -> int:

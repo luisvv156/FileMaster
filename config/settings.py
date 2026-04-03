@@ -19,7 +19,6 @@ def _resolve_app_state_dir() -> Path:
     override = os.getenv("FILEMASTER_HOME", "").strip()
     if override:
         return Path(override).expanduser()
-
     if sys.platform == "win32":
         base = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
     elif sys.platform == "darwin":
@@ -49,17 +48,103 @@ LOG_FILE_PATH = LOG_DIR / "filemaster.log"
 
 DEFAULT_DUPLICATES_FOLDER_NAME = "_Duplicados"
 WATCH_INTERVAL_SECONDS = 3.0
-DEFAULT_SIMILARITY_THRESHOLD = 0.92
-DEFAULT_COSINE_THRESHOLD = 0.75       # Similitud coseno para classifier.py
+
+# ── Umbrales de similitud ──────────────────────────────────────────────────
+DEFAULT_SIMILARITY_THRESHOLD = 0.70
+DEFAULT_CLUSTERING_THRESHOLD = 0.62
+DEFAULT_DUPLICATE_SIMILARITY = 0.88
+DEFAULT_COSINE_THRESHOLD = 0.70
 
 SUPPORTED_TEXT_EXTENSIONS = {
     ".txt", ".md", ".csv", ".json", ".log", ".py",
     ".docx", ".pptx", ".pdf",
-    ".xlsx", ".xls",          # ← añadir documentos de hoja de cálculo
-    ".odt", ".odp", ".ods",   # ← formatos LibreOffice (comunes en universitarios)
+    ".xlsx", ".xls",
+    ".odt", ".odp", ".ods",
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+# ── Categorías académicas predeterminadas ─────────────────────────────────
+# Se usan cuando categories.json está vacío (primera ejecución o después de reset).
+# Basadas en las materias reales del usuario.
+DEFAULT_ACADEMIC_CATEGORIES: list[dict] = [
+    {
+        "name": "Taller de Investigacion",
+        "keywords": [
+            "investigacion", "metodologia", "hipotesis", "marco", "teorico",
+            "bibliografia", "fuente", "cita", "referencia", "abstract",
+            "resumen", "objetivo", "planteamiento", "problema", "justificacion",
+            "tesis", "ensayo", "resultado", "conclusion", "encuesta",
+            "variable", "apa", "capitulo", "muestra", "instrumento", "raul", "monforte", "chulin"
+        ],
+        "files": []
+    },
+    {
+        "name": "Tecnologias de Virtualizacion",
+        "keywords": [
+            "virtualizacion", "maquina", "virtual", "vmware", "virtualbox",
+            "hypervisor", "contenedor", "docker", "imagen", "snapshot",
+            "vm", "host", "guest", "instancia", "servidor", "cluster", "dagoberto", "quintanilla", "alvarado",
+            "proxmox", "hyper", "particion", "iso", "ovf"
+        ],
+        "files": []
+    },
+    {
+        "name": "Tecnologias en la Nube",
+        "keywords": [
+            "nube", "cloud", "aws", "azure", "google", "gcp", "s3",
+            "bucket", "lambda", "serverless", "iaas", "paas", "saas",
+            "storage", "escalabilidad", "microservicio", "api", "rest",
+            "despliegue", "kubernetes", "balanceo", "region", "firebase", "omar", "eduardo", "betanzos", "martinez"
+        ],
+        "files": []
+    },
+    {
+        "name": "Hacking Etico",
+        "keywords": [
+            "hacking", "etico", "pentest", "penetracion", "vulnerabilidad",
+            "exploit", "nmap", "escaneo", "puerto", "reconocimiento",
+            "metasploit", "kali", "firewall", "intrusion", "cve",
+            "payload", "shell", "privilege", "footprinting", "enumeration",
+            "sniffing", "tcp", "udp", "ataque", "defensa", "parche", "jose", "eduardo", "rios", "mendoza"
+        ],
+        "files": []
+    },
+    {
+        "name": "Administracion de Redes",
+        "keywords": [
+            "red", "router", "switch", "protocolo", "ip", "mascara",
+            "subred", "vlan", "ospf", "bgp", "dns", "dhcp", "nat",
+            "gateway", "topologia", "ethernet", "wifi", "inalambrico",
+            "monitoreo", "snmp", "cisco", "tracer", "latencia", "banda", "aurora", "moreno", "rodriguez", "ubuntu", "zabbix", "prtg"
+        ],
+        "files": []
+    },
+    {
+        "name": "Inteligencia Artificial",
+        "keywords": [
+            "inteligencia", "artificial", "machine", "learning", "neuronal",
+            "algoritmo", "clasificacion", "regresion", "clustering",
+            "entrenamiento", "modelo", "prediccion", "embedding",
+            "transformer", "nlp", "procesamiento", "lenguaje", "natural",
+            "deep", "backpropagation", "dataset", "epoch", "perceptron",
+            "feature", "overfitting", "tensorflow", "pytorch", "nora", "hilda", "reyes", "ramirez", "filemaster", "tecnicas"
+        ],
+        "files": []
+    },
+    {
+        "name": "Programacion Logica y Funcional",
+        "keywords": [
+            "prolog", "haskell", "lisp", "erlang", "funcional", "logica",
+            "predicado", "clausula", "recursion", "lambda", "patron",
+            "matching", "inmutable", "backtracking", "lazy", "python", "sigvet",
+            "inferencia", "declarativo", "vibecoding", "currying", "composicion",
+            "arbol", "lista", "higher", "orden", "pureza", "alexis", "ivan", "roman", "chevez"
+        ],
+        "files": []
+    },
+]
 
 
 @dataclass
@@ -79,14 +164,12 @@ class UserConfig:
         if not self.is_configured:
             return None
         p = Path(self.watch_folder).expanduser()
-        return p if p.exists() else None   # ← retorna None si la ruta ya no existe
+        return p if p.exists() else None
+
 
 def reset_user_config() -> None:
-    """Restaura la configuración a valores por defecto.
-    
-    Llamado desde la pantalla de configuración avanzada de la GUI.
-    """
     save_user_config(UserConfig())
+
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,16 +214,17 @@ def load_user_config() -> UserConfig:
         return UserConfig()
 
     threshold = float(payload.get("similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD))
-    if threshold < 0.1 or threshold > 1.0:
+    if threshold < 0.30 or threshold > 1.0:
         threshold = DEFAULT_SIMILARITY_THRESHOLD
 
     return UserConfig(
         watch_folder=str(payload.get("watch_folder", "")),
         auto_rename=bool(payload.get("auto_rename", True)),
-        auto_organize=bool(payload.get("auto_organize", True)),   # ← añadir
+        auto_organize=bool(payload.get("auto_organize", True)),
         detect_duplicates=bool(payload.get("detect_duplicates", True)),
         similarity_threshold=threshold,
     )
+
 
 def save_user_config(config: UserConfig) -> None:
     ensure_data_files()
@@ -152,8 +236,11 @@ def load_categories() -> list[dict[str, object]]:
     try:
         payload = json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
-    return payload if isinstance(payload, list) else []
+        return list(DEFAULT_ACADEMIC_CATEGORIES)
+    # ✅ Si está vacío, usar categorías predeterminadas
+    if not payload or not isinstance(payload, list):
+        return list(DEFAULT_ACADEMIC_CATEGORIES)
+    return payload
 
 
 def save_categories(categories: list[dict[str, object]]) -> None:

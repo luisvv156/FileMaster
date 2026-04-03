@@ -55,7 +55,7 @@ class OCRHandler:
             dpi: Resolución en DPI para el procesamiento de imagen.
             psm: Page Segmentation Mode de Tesseract (3=auto, 6=bloque uniforme).
         """
-        self._binary: str | None = shutil.which("tesseract")
+        self._binary: str | None = self._find_tesseract()
         self.languages = languages
         self.dpi = dpi
         self.psm = psm
@@ -72,6 +72,26 @@ class OCRHandler:
     # ------------------------------------------------------------------
     # Propiedades públicas
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_tesseract() -> str | None:
+        """Busca tesseract en PATH y en rutas comunes de Windows."""
+        # Intentar primero con PATH normal
+        found = shutil.which("tesseract")
+        if found:
+            return found
+
+        # Rutas comunes de instalación en Windows
+        common_paths = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            r"C:\Users\tugfa\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
+        ]
+        for path in common_paths:
+            if Path(path).exists():
+                return path
+
+        return None
 
     @property
     def available(self) -> bool:

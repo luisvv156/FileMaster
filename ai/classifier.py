@@ -6,69 +6,83 @@ import logging
 from typing import TYPE_CHECKING
 
 from ai.embeddings import cosine_similarity, centroid
+from config.settings import DEFAULT_SIMILARITY_THRESHOLD
 
 if TYPE_CHECKING:
     from core.models import FileRecord
 
 logger = logging.getLogger(__name__)
 
-# Umbral mínimo para aceptar una clasificación como válida
-_DEFAULT_THRESHOLD = 0.50
+# FIX: usar threshold de settings (0.70) en lugar del hardcodeado 0.50
+_DEFAULT_THRESHOLD = DEFAULT_SIMILARITY_THRESHOLD
 
 
 class DocumentClassifier:
     """Clasifica un documento nuevo dentro de los clusters existentes.
 
-    Compara el embedding del documento con el centroide de cada cluster
-    y asigna el cluster con mayor similitud coseno. Si ningún cluster
-    supera el umbral, retorna None (el documento se marca como sin clasificar).
-
-    Uso básico:
-        classifier = DocumentClassifier()
-        label, score = classifier.classify(
-            embedding=record.embedding,
-            category_vectors={"redes": [...], "programacion": [...]},
-        )
+    Estrategia:
+    1. Compara el embedding del doc con el centroide de cada categoría.
+    2. Si el mejor score supera el umbral → asigna esa categoría.
+    3. Si no supera el umbral pero hay una categoría claramente mejor
+       (gap > 0.10 sobre la segunda) → asigna igual con score bajo.
+    4. Si hay empate o score muy bajo → retorna None (sin clasificar).
     """
+# ai/classifier.py — reemplaza solo el método classify()
 
-    def classify(
-        self,
-        embedding: list[float],
-        category_vectors: dict[str, list[float]],
-        *,
-        similarity_threshold: float = _DEFAULT_THRESHOLD,
-    ) -> tuple[str | None, float]:
-        """Clasifica un embedding contra vectores de categoría.
+def classify(
+    self,
+    embedding: list[float],
+    category_vectors: dict[str, list[float]],
+    *,
+    similarity_threshold: float = _DEFAULT_THRESHOLD,
+) -> tuple[str | None, float]:
+    if not embedding or not category_vectors:
+        return None, 0.0
 
-        Args:
-            embedding: Vector del documento a clasificar.
-            category_vectors: Mapa {nombre_categoria: vector_centroide}.
-            similarity_threshold: Similitud mínima para aceptar clasificación.
+    scores: list[tuple[float, str]] = []
+    for label, cat_vector in category_vectors.items():
+        if not cat_vector or all(v == 0.0 for v in cat_vector):
+            continue
+        score = cosine_similarity(embedding, cat_vector)
+        scores.append((score, label))
 
-        Returns:
-            Tupla (categoria, score). Si no supera el umbral → (None, score).
-        """
-        if not embedding or not category_vectors:
-            return None, 0.0
+    if not scores:
+        return None, 0.0
 
-        best_label: str | None = None
-        best_score = 0.0
+    scores.sort(reverse=True)
+    best_score, best_label = scores[0]
 
-        for label, cat_vector in category_vectors.items():
-            score = cosine_similarity(embedding, cat_vector)
-            if score > best_score:
-                best_label = label
-                best_score = score
+    # ✅ Umbral reducido al 80% del configurado para ser menos estricto
+    effective_threshold = similarity_threshold * 0.80
 
-        if best_score < similarity_threshold:
-            logger.debug(
-                "Clasificación descartada — mejor score %.3f < umbral %.3f",
-                best_score, similarity_threshold,
-            )
-            return None, best_score
-
+    # Supera umbral directo
+    if best_score >= effective_threshold:
         logger.debug("Clasificado como '%s' (score=%.3f)", best_label, best_score)
         return best_label, best_score
+
+    # ✅ Única categoría: asignar con score >= 0.30 (antes 0.40)
+    if len(scores) == 1 and best_score >= 0.30:
+        logger.debug(
+            "Única categoría '%s' con score %.3f — asignando",
+            best_label, best_score,
+        )
+        return best_label, best_score
+
+    # ✅ Margen reducido a 0.08 (antes 0.12) y score mínimo a 0.35 (antes 0.45)
+    if len(scores) >= 2 and best_score >= 0.35:
+        second_score = scores[1][0]
+        if best_score - second_score >= 0.08:
+            logger.debug(
+                "Clasificado '%s' por margen (score=%.3f, gap=%.3f)",
+                best_label, best_score, best_score - second_score,
+            )
+            return best_label, best_score
+
+    logger.debug(
+        "Clasificación descartada — mejor score %.3f < umbral efectivo %.3f",
+        best_score, effective_threshold,
+    )
+    return None, best_score
 
     def classify_against_clusters(
         self,
@@ -77,25 +91,9 @@ class DocumentClassifier:
         *,
         similarity_threshold: float = _DEFAULT_THRESHOLD,
     ) -> int:
-        """Asigna un FileRecord al cluster más similar.
-
-        Opera sobre los grupos reales (salida de cluster_files()) en lugar
-        de vectores precalculados. Calcula el centroide de cada grupo
-        internamente y clasifica por similitud.
-
-        Args:
-            record: FileRecord con `embedding` ya calculado.
-            groups: Salida de clustering.cluster_files().
-            similarity_threshold: Umbral mínimo de similitud.
-
-        Returns:
-            cluster_id asignado. Si no supera umbral, crea un nuevo grupo
-            singleton con el ID más alto + 1.
-        """
         if not groups:
             return 0
 
-        # Calcular centroides de cada grupo
         cluster_centroids: dict[int, list[float]] = {
             cid: centroid([r.embedding for r in members])
             for cid, members in groups.items()
@@ -117,7 +115,6 @@ class DocumentClassifier:
             )
             return best_id
 
-        # Sin cluster suficientemente similar → singleton nuevo
         new_id = max(groups.keys()) + 1
         logger.debug(
             "Archivo '%s' sin cluster similar → singleton %d",
@@ -130,14 +127,5 @@ def classify_file(
     record: "FileRecord",
     clusters: dict[int, list["FileRecord"]],
 ) -> int:
-    """Función libre que usa directamente el controller.py.
-
-    Args:
-        record: FileRecord con embedding calculado.
-        clusters: Grupos existentes (salida de cluster_files).
-
-    Returns:
-        cluster_id asignado.
-    """
     classifier = DocumentClassifier()
     return classifier.classify_against_clusters(record, clusters)

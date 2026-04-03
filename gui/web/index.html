@@ -52,7 +52,7 @@
             <button id="btn-open-panel" class="btn btn-secondary" onclick="window.app.navigate('main')" style="display:none">Abrir panel</button>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:6px">
-            <span class="tag">IA con DBSCAN</span><span class="tag">Observador en tiempo real</span><span class="tag">Renombrado opcional</span><span class="tag">Papelera de duplicados</span><span class="tag">100% local</span>
+            <span class="tag">IA con DBSCAN</span><span class="tag">Observador en tiempo real</span><span class="tag">Papelera de duplicados</span><span class="tag">100% local</span>
           </div>
         </div>
 
@@ -181,11 +181,6 @@
               <div class="toggle-row">
                 <div><div style="font-size:13px;font-weight:500;color:var(--text)">Renombrado automático de archivos</div><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">La IA sugerirá nombres descriptivos para cada archivo</div></div>
                 <label class="toggle-switch"><input id="cfg-rename" type="checkbox" checked><span class="toggle-track"></span></label>
-              </div>
-              <div id="cfg-rename-preview" style="background:var(--bg-card);border:1px solid var(--border-soft);border-radius:8px;padding:10px 12px;margin:10px 0">
-                <div style="font-size:9px;font-weight:700;color:var(--text-muted);letter-spacing:.08em;margin-bottom:8px">VISTA PREVIA DEL RENOMBRADO</div>
-                <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:4px"><span style="color:var(--danger)">SKDJH-KEFHE.pdf</span><span style="color:var(--success)">ia_reporte_2026-03-26.pdf</span></div>
-                <div style="display:flex;justify-content:space-between;font-size:10px"><span style="color:var(--danger)">trabajo_final_v3.docx</span><span style="color:var(--success)">base_de_datos_indices.docx</span></div>
               </div>
               <div class="toggle-row">
                 <div><div style="font-size:13px;font-weight:500;color:var(--text)">Detección de duplicados</div><div style="font-size:11px;color:var(--text-secondary);margin-top:3px">Los duplicados se moverán a una carpeta especial para revisión</div></div>
@@ -345,10 +340,17 @@
           </div>
         </div>
       </div><!-- /manual -->
-
     </div><!-- /content -->
   </div><!-- /body -->
 </div><!-- /root -->
+<div id="loading-overlay" style="display:none">
+  <div id="loading-card">
+    <img src="../../assets/logo.png" id="loading-logo" />
+    <div id="loading-spinner"></div>
+    <div id="loading-title">Analizando archivos...</div>
+    <div id="loading-subtitle">La IA está leyendo el contenido de tus documentos</div>
+  </div>
+</div>
 <script src="js/bridge.js"></script>
 </body>
 </html>

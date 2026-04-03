@@ -1,5 +1,4 @@
 """Controlador principal de FileMaster."""
-
 from __future__ import annotations
 
 import json
@@ -7,11 +6,13 @@ import logging
 import threading
 import time
 import uuid
+import re
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+from ai.hint_classifier import classify_by_hints
 from ai.classifier import DocumentClassifier
 from ai.clustering import DocumentClusterer
 from ai.embeddings import EmbeddingService, centroid
@@ -39,10 +40,54 @@ from core.watcher import FileWatcher
 
 
 KNOWN_CATEGORY_HINTS = {
-    "Inteligencia Artificial": {"red", "neuronal", "algoritmo", "clasificacion", "aprendizaje", "modelo", "ia"},
-    "Redes de Computadoras": {"router", "switch", "tcp", "ip", "latencia", "protocolo", "firewall"},
-    "Base de Datos": {"sql", "consulta", "joins", "indice", "normalizacion", "tabla", "relacional"},
-    "Sistemas Operativos": {"kernel", "memoria", "proceso", "scheduler", "hilo", "sistema"},
+    "Inteligencia Artificial": {
+        "inteligencia", "artificial", "machine", "learning", "neuronal",
+        "algoritmo", "clasificacion", "regresion", "clustering",
+        "entrenamiento", "modelo", "prediccion", "embedding",
+        "transformer", "nlp", "procesamiento", "lenguaje", "natural",
+        "deep", "backpropagation", "dataset", "epoch", "perceptron",
+        "feature", "overfitting", "tensorflow", "pytorch", "nora", "hilda", "reyes", "ramirez", "filemaster", "tecnicas"
+    },
+    "Administracion de Redes": {
+        "red", "router", "switch", "protocolo", "ip", "mascara",
+        "subred", "vlan", "ospf", "bgp", "dns", "dhcp", "nat",
+        "gateway", "topologia", "ethernet", "wifi", "inalambrico",
+        "monitoreo", "snmp", "cisco", "tracer", "latencia", "banda",
+        "aurora", "moreno", "rodriguez", "ubuntu", "zabbix", "prtg"
+    },
+    "Hacking Etico": {
+        "hacking", "etico", "pentest", "penetracion", "vulnerabilidad",
+        "exploit", "nmap", "escaneo", "puerto", "reconocimiento",
+        "metasploit", "kali", "firewall", "intrusion", "cve",
+        "payload", "shell", "privilege", "footprinting", "enumeration",
+        "sniffing", "tcp", "udp", "ataque", "defensa", "parche", "jose", "eduardo", "rios", "mendoza"
+    },
+    "Tecnologias de Virtualizacion": {
+        "virtualizacion", "maquina", "virtual", "vmware", "virtualbox",
+        "hypervisor", "contenedor", "docker", "imagen", "snapshot",
+        "vm", "host", "guest", "instancia", "servidor", "cluster", "dagoberto", "quintanilla", "alvarado",
+        "proxmox", "hyper", "particion", "iso", "ovf"
+    },
+    "Tecnologias en la Nube": {
+        "nube", "cloud", "aws", "azure", "google", "gcp", "s3",
+        "bucket", "lambda", "serverless", "iaas", "paas", "saas",
+        "storage", "escalabilidad", "microservicio", "api", "rest",
+        "despliegue", "proxmox", "clusters", "cluster", "pve", "pam", "omar", "eduardo", "betanzos", "martinez"
+    },
+    "Taller de Investigacion": {
+        "investigacion", "metodologia", "hipotesis", "marco", "teorico",
+        "bibliografia", "fuente", "cita", "referencia", "abstract",
+        "resumen", "objetivo", "planteamiento", "problema", "justificacion", "lms",
+        "tesis", "ensayo", "resultado", "conclusion", "encuesta", "entrevista", "propuesta", "moodle",
+        "variable", "apa", "capitulo", "muestra", "instrumento", "raul", "monforte", "chulin"
+    },
+    "Programacion Logica y Funcional": {
+        "prolog", "haskell", "lisp", "erlang", "funcional", "logica",
+        "predicado", "clausula", "recursion", "lambda", "patron",
+        "matching", "inmutable", "backtracking", "lazy", "python", "sigvet",
+        "inferencia", "declarativo", "vibecoding", "currying", "composicion",
+        "arbol", "lista", "higher", "orden", "pureza", "alexis", "ivan", "roman", "chevez"
+    },
 }
 
 logger = logging.getLogger(__name__)
@@ -97,6 +142,14 @@ class FileMasterController:
 
     def has_configuration(self) -> bool:
         return self.config.is_configured and self.config.watch_path is not None and self.config.watch_path.exists()
+    
+    def _require_watch_folder(self) -> Path:
+        if not self.config.watch_path or not self.config.watch_path.exists():
+            raise RuntimeError(
+                f"La carpeta de monitoreo no existe o no está configurada: "
+                f"'{self.config.watch_folder}'"
+                )
+        return self.config.watch_path
 
     def update_config(self, watch_folder: str, auto_rename: bool, detect_duplicates: bool) -> None:
         clean_watch_folder = watch_folder.strip()
@@ -148,7 +201,9 @@ class FileMasterController:
         proposals: list[GroupProposal] = []
         for index, documents_in_group in enumerate(grouped_documents.values(), start=1):
             keywords = self._keywords_for_documents(documents_in_group)
-            name = self._suggest_category_name(keywords)
+            representative_path = Path(documents_in_group[0].path) if documents_in_group else None
+            group_text = " ".join(doc.text or "" for doc in documents_in_group[:3])
+            name = self._suggest_category_name(keywords, text=group_text)
             proposals.append(
                 GroupProposal(
                     group_id=f"group-{index}",
@@ -177,26 +232,41 @@ class FileMasterController:
         if not documents:
             return {}
 
-        group_assignments: dict[str, str] = {}
-        categories_payload = []
+        # ✅ Mismo nombre = misma carpeta (fusión, no duplicado numerado)
+        group_to_folder: dict[str, str] = {}
         for group_id, group in proposals.items():
-            name = (mapping.get(group_id) or group["suggested_name"]).strip() or group["suggested_name"]
-            group_assignments[group_id] = name
-            categories_payload.append(
-                {
-                    "name": name,
-                    "keywords": group["keywords"],
-                    "files": group["file_names"],
-                }
-            )
+            name = (mapping.get(group_id) or group["suggested_name"]).strip()
+            if not name:
+                name = group["suggested_name"]
+            group_to_folder[group_id] = name
 
+        # Construir categories_payload sin duplicar nombres
+        seen_names: dict[str, dict] = {}
+        for group_id, group in proposals.items():
+            name = group_to_folder[group_id]
+            if name in seen_names:
+                # ✅ Fusionar keywords y files en la entrada existente
+                seen_names[name]["keywords"] = list(set(
+                    seen_names[name]["keywords"] + group["keywords"]
+                ))
+                seen_names[name]["files"].extend(group["file_names"])
+            else:
+                seen_names[name] = {
+                    "name": name,
+                    "keywords": list(group["keywords"]),
+                    "files": list(group["file_names"]),
+                }
+
+        categories_payload = list(seen_names.values())
         save_categories(categories_payload)
         self.state["categories"] = categories_payload
 
+        # Asignar carpeta a cada documento por doc_id
         assignment_by_doc: dict[str, str] = {}
-        for group in pending_groups:
+        for group_id, group in proposals.items():
+            folder_name = group_to_folder[group_id]
             for document_id in group["file_ids"]:
-                assignment_by_doc[document_id] = group_assignments[group["group_id"]]
+                assignment_by_doc[document_id] = folder_name
 
         for document in documents:
             document.assigned_category = assignment_by_doc.get(document.doc_id)
@@ -212,29 +282,31 @@ class FileMasterController:
 
     def organize_now(self) -> dict[str, object]:
         watch_path = self._require_watch_folder()
-        if not load_categories():
+        categories = load_categories()
+        
+        # ✅ Verificar que haya categorías CON keywords, no solo que existan
+        has_usable_categories = any(
+            cat.get("keywords") or cat.get("files")
+            for cat in categories
+        )
+        # Las DEFAULT_ACADEMIC_CATEGORIES tienen keywords → has_usable_categories=True
+        # Esto evita el bloqueo innecesario de "confirma los grupos"
+        
+        if not categories:
             proposals = self.analyze_initial()
             if proposals:
-                self.state["status_message"] = "Se detectaron documentos nuevos. Confirma los grupos sugeridos para continuar."
+                self.state["status_message"] = "Confirma los grupos sugeridos para continuar."
                 self._notify()
-                logger.info("Organizacion detenida a la espera de confirmacion de grupos | grupos=%s", len(proposals))
                 return self._empty_summary()
+        
         incoming = self._collect_documents(self._incoming_files(watch_path))
         if not incoming:
             self.state["status_message"] = "No hay archivos nuevos para organizar."
             self._notify()
-            logger.info("Organizacion manual sin archivos nuevos | carpeta=%s", watch_path)
             return self.state.get("last_summary", {})
 
         summary = self._organize_documents(incoming)
         self.refresh_runtime_state(last_summary=summary)
-        logger.info(
-            "Organizacion manual completada | detectados=%s | organizados=%s | duplicados=%s | sin_clasificar=%s",
-            summary.get("detected", 0),
-            summary.get("organized", 0),
-            summary.get("duplicates", 0),
-            summary.get("unclassified", 0),
-        )
         self._notify()
         return summary
 
@@ -415,6 +487,9 @@ class FileMasterController:
         *,
         explicit_assignments: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        all_texts = [doc.text for doc in documents if doc.text]
+        if all_texts:
+            self.keyword_extractor.fit_corpus(all_texts)
         start = time.perf_counter()
         explicit_assignments = explicit_assignments or {}
         watch_path = self._require_watch_folder()
@@ -455,26 +530,38 @@ class FileMasterController:
 
             assigned = explicit_assignments.get(document.doc_id)
             confidence = 1.0 if assigned else 0.0
+ 
             if not assigned:
+                # ── Paso 1: hints directos en portada (nombre docente/materia) ──
+                hint_label, hint_conf = classify_by_hints(
+                    document.text or "",
+                    KNOWN_CATEGORY_HINTS,
+                )
+                if hint_label:
+                    assigned   = hint_label
+                    confidence = hint_conf
+ 
+            if not assigned:
+                # ── Paso 2: similitud por embedding con centroides ──
                 label, confidence = self.classifier.classify(
                     document.embedding,
                     {category.name: category.centroid for category in categories if category.centroid},
                     similarity_threshold=self.config.similarity_threshold,
                 )
                 assigned = label
-                if not assigned:
-                    assigned, confidence = self._classify_by_keywords(document.keywords, categories)
+ 
+            if not assigned:
+                # ── Paso 3: keywords por Jaccard (fallback ligero) ──
+                assigned, confidence = self._classify_by_keywords(document.keywords, categories)
 
-            if not assigned or not (document.text.strip() or document.keywords):
+            if not assigned:
                 cycle.unclassified += 1
-                unclassified_notes.append(
-                    {
-                        "path": document.path,
-                        "name": document.name,
-                        "reason": document.extraction_note or "No se encontro texto suficiente para clasificarlo.",
-                        "keywords": document.keywords,
-                    }
-                )
+                unclassified_notes.append({
+                    "path": document.path,
+                    "name": document.name,
+                    "reason": document.extraction_note or "No se encontró categoría.",
+                    "keywords": document.keywords,
+                })
                 continue
 
             destination = self.organizer.organize(
@@ -484,6 +571,12 @@ class FileMasterController:
                 auto_rename=self.config.auto_rename,
                 keywords=document.keywords,
             )
+            if destination is None:
+                logger.warning("organize() retornó None para '%s', omitiendo.", source.name)
+                cycle.unclassified += 1
+                unclassified_notes.append({"path": document.path, "name": document.name, "reason": "El archivo no pudo moverse.", "keywords": document.keywords})
+                continue
+
             self._update_duplicate_item_path(persisted_duplicate_groups, document.doc_id, destination, Path(document.path))
             folder_counter[assigned] += 1
             cycle.organized += 1
@@ -538,11 +631,21 @@ class FileMasterController:
             documents = by_name.get(name, [])
             keywords = self._keywords_for_documents(documents) or list(item.get("keywords", []))
             vectors = [document.embedding for document in documents if document.embedding]
+
+            if vectors:
+                computed_centroid = centroid(vectors)
+            elif keywords:
+                # ✅ Centroide sintético: embed las keywords como texto
+                synthetic_text = " ".join(keywords)
+                computed_centroid = self.embedder.embed(synthetic_text)
+            else:
+                computed_centroid = []
+
             categories.append(
                 CategoryProfile(
                     name=name,
                     keywords=keywords,
-                    centroid=centroid(vectors) if vectors else [],
+                    centroid=computed_centroid,
                     files=[document.path for document in documents],
                 )
             )
@@ -554,12 +657,29 @@ class FileMasterController:
             counter.update(document.keywords)
         return [token for token, _count in counter.most_common(limit)]
 
-    def _suggest_category_name(self, keywords: list[str]) -> str:
-        keyword_set = set(keywords)
-        for name, hints in KNOWN_CATEGORY_HINTS.items():
-            if keyword_set.intersection(hints):
-                return name
-        return title_from_keywords(keywords, fallback="Grupo Academico")
+    def _suggest_category_name(self, keywords: list[str], text: str = "") -> str:
+            # Paso 1: buscar hints en el texto si está disponible
+            if text:
+                from ai.hint_classifier import classify_by_hints
+                hint_label, hint_conf = classify_by_hints(text, KNOWN_CATEGORY_HINTS)
+                if hint_label and hint_conf >= 0.72:
+                    return hint_label
+    
+            # Paso 2: buscar en keywords directamente contra hints
+            keyword_set = set(kw.lower() for kw in keywords)
+            best_name = None
+            best_hits = 0
+            for name, hint_words in KNOWN_CATEGORY_HINTS.items():
+                hits = len(keyword_set.intersection(hint_words))
+                if hits > best_hits:
+                    best_name  = name
+                    best_hits  = hits
+    
+            if best_name and best_hits >= 1:
+                return best_name
+    
+            # Paso 3: fallback a título generado desde keywords
+            return title_from_keywords(keywords, fallback="Grupo Academico")
 
     def _classify_by_keywords(
         self,
@@ -583,7 +703,7 @@ class FileMasterController:
                 best_name = category.name
                 best_score = score
 
-        if best_name and best_score >= 0.18:
+        if best_name and best_score >= 0.08:
             return best_name, best_score
         return None, best_score
 
@@ -725,20 +845,16 @@ class FileMasterController:
 
     def _handle_watcher_event(self) -> None:
         if not self._busy.acquire(blocking=False):
+            logger.debug("Watcher: evento ignorado, organización en curso")
             return
         try:
+            self.watcher.pause()
             self.organize_now()
         except Exception:
-            logger.exception("Error durante la ejecucion del watcher")
+            logger.exception("Error durante la ejecución del watcher")
         finally:
             self._busy.release()
-
-    def _require_watch_folder(self) -> Path:
-        watch_path = self.config.watch_path
-        if watch_path is None:
-            raise ValueError("La carpeta monitoreada no ha sido configurada.")
-        self.file_manager.ensure_folder(watch_path)
-        return watch_path
+            self.watcher.resume()
 
     def _notify(self) -> None:
         if self.notify_callback:

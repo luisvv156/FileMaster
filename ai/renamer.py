@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Longitud máxima del nombre base (sin extensión)
 _MAX_NAME_LENGTH = 60
 
 
@@ -17,47 +15,34 @@ class SmartRenamer:
     """Genera nombres descriptivos para documentos a partir de su metadata.
 
     Formato de salida:
-        {categoria}_{keyword1}_{keyword2}_{fecha}{extension}
+        {categoria}_{keyword1}_{keyword2}{extension}
 
     Ejemplo:
-        redes_protocolo_tcp_2026-03-29.pdf
+        hacking_etico_vulnerabilidad_exploit.pdf
     """
 
+    # ✅ suggest_name DENTRO de la clase (indentado con 4 espacios)
     def suggest_name(
         self,
         file_path: Path,
         category: str,
         keywords: list[str] | None = None,
     ) -> str:
-        """Genera un nombre de archivo sugerido.
-
-        Args:
-            file_path: Ruta original del archivo (para obtener la extensión).
-            category: Categoría temática del documento (e.g. "Redes").
-            keywords: Lista de keywords ordenadas por relevancia (mayor primero).
-
-        Returns:
-            Nombre de archivo con extensión. Si la generación falla,
-            retorna el nombre original limpio.
-        """
         keywords = keywords or []
 
         try:
             category_slug = self._slugify(category) or "documento"
 
-            # Tomar hasta 3 keywords con slug válido
             kw_slugs = [
                 s for kw in keywords
                 if (s := self._slugify(kw))
-            ][:3]
+            ][:2]
 
-            date_part = datetime.now().date().isoformat()
             extension = file_path.suffix.lower() or ".bin"
 
-            parts = [category_slug] + kw_slugs + [date_part]
+            parts = [category_slug] + kw_slugs
             base = "_".join(part for part in parts if part)
 
-            # Truncar si el nombre es demasiado largo
             if len(base) > _MAX_NAME_LENGTH:
                 base = base[:_MAX_NAME_LENGTH].rstrip("_")
 
@@ -73,14 +58,7 @@ class SmartRenamer:
             return file_path.name
 
     def suggest_name_from_record(self, record: "FileRecord") -> str:  # type: ignore[name-defined]
-        """Atajo que opera directamente sobre un FileRecord.
-
-        Args:
-            record: FileRecord con `path`, `category` y `keywords` ya poblados.
-
-        Returns:
-            Nombre de archivo sugerido.
-        """
+        """Atajo que opera directamente sobre un FileRecord."""
         return self.suggest_name(
             file_path=Path(record.path),
             category=record.category or "documento",
@@ -89,33 +67,18 @@ class SmartRenamer:
 
     @staticmethod
     def _slugify(value: str) -> str:
-        """Convierte un texto en un slug seguro para nombre de archivo.
-
-        - Minúsculas
-        - Solo letras, dígitos y guiones bajos
-        - Sin guiones bajos al inicio o al final
-        - Máximo 20 caracteres por slug individual
-        """
+        """Convierte un texto en slug seguro para nombre de archivo."""
         if not value:
             return ""
         value = value.strip().lower()
-        # Reemplazar caracteres no válidos por guión bajo
         value = re.sub(r"[^a-z0-9]+", "_", value)
         value = value.strip("_")
         return value[:20]
 
 
+# ✅ Función libre — FUERA de la clase (sin indentación)
 def generate_name(keywords: list[str], category: str, extension: str = ".pdf") -> str:
-    """Función libre que usa el controller.py directamente.
-
-    Args:
-        keywords: Keywords del documento ordenadas por relevancia.
-        category: Categoría temática asignada.
-        extension: Extensión del archivo (con punto, e.g. ".pdf").
-
-    Returns:
-        Nombre de archivo sugerido.
-    """
+    """Función libre para usar directamente desde controller.py."""
     renamer = SmartRenamer()
     dummy_path = Path(f"documento{extension}")
     return renamer.suggest_name(dummy_path, category, keywords)

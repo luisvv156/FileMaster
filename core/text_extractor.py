@@ -1,7 +1,7 @@
 """Extracción de texto para los formatos soportados por FileMaster.
 
 Jerarquía de extracción por formato:
-  PDF   → PyMuPDF (fitz) → pdftotext CLI → regex básico → OCR
+  PDF   → pdfplumber → PyMuPDF (fitz) → pdftotext CLI → OCR
   DOCX  → python-docx → XML manual (fallback)
   PPTX  → python-pptx → XML manual (fallback)
   Texto → lectura directa con detección de encoding
@@ -24,51 +24,48 @@ from core.ocr_handler import OCRHandler
 
 logger = logging.getLogger(__name__)
 
-# Límite de caracteres para no saturar el pipeline NLP/embeddings
 MAX_CHARS = 50_000
-
-# Encodings a probar en orden para archivos de texto plano
 _TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "latin-1", "cp1252", "iso-8859-1")
+
+# Mínimo de caracteres para considerar una extracción válida
+_MIN_TEXT_LENGTH = 50
 
 
 class TextExtractor:
-    """Extrae texto de documentos en múltiples formatos.
-
-    Usa las bibliotecas de mayor calidad disponibles y degrada
-    graciosamente si alguna no está instalada.
-    """
+    """Extrae texto de documentos en múltiples formatos."""
 
     def __init__(self) -> None:
         self.ocr_handler = OCRHandler()
-        self._pdftotext = shutil.which("pdftotext")
-        self._has_fitz = self._check_import("fitz")
-        self._has_docx = self._check_import("docx")
-        self._has_pptx = self._check_import("pptx")
+        self._pdftotext    = shutil.which("pdftotext")
+        self._has_pdfplumber = self._check_import("pdfplumber")
+        self._has_fitz     = self._check_import("fitz")
+        self._has_docx     = self._check_import("docx")
+        self._has_pptx     = self._check_import("pptx")
+
+        # Log de capacidades disponibles al iniciar
+        caps = []
+        if self._has_pdfplumber: caps.append("pdfplumber")
+        if self._has_fitz:       caps.append("pymupdf")
+        if self._pdftotext:      caps.append("pdftotext")
+        if self._has_docx:       caps.append("python-docx")
+        if self._has_pptx:       caps.append("python-pptx")
+        logger.info("TextExtractor iniciado — capacidades: %s", ", ".join(caps) or "básico")
 
     # ------------------------------------------------------------------
     # Punto de entrada principal
     # ------------------------------------------------------------------
 
     def extract(self, file_path: Path) -> ExtractionResult:
-        """Extrae texto del archivo según su extensión.
-
-        Args:
-            file_path: Ruta al archivo a procesar.
-
-        Returns:
-            ExtractionResult con el texto extraído, método usado y
-            mensaje de error (vacío si todo fue bien).
-        """
         if not file_path.exists():
             return ExtractionResult("", "error", f"Archivo no encontrado: {file_path}")
 
         suffix = file_path.suffix.lower()
 
         extractors = {
-            ".pdf": self._extract_pdf,
+            ".pdf":  self._extract_pdf,
             ".docx": self._extract_docx,
             ".pptx": self._extract_pptx,
-            ".doc": self._extract_doc_fallback,
+            ".doc":  self._extract_doc_fallback,
         }
 
         plain_text_extensions = {
@@ -85,54 +82,73 @@ class TextExtractor:
         else:
             return ExtractionResult("", "unsupported", f"Formato no soportado: {suffix}")
 
-        # Truncar para no saturar el pipeline NLP
         if len(result.text) > MAX_CHARS:
-            logger.debug("Texto truncado de %d a %d caracteres en %s",
-                         len(result.text), MAX_CHARS, file_path.name)
-            result = ExtractionResult(result.text[:MAX_CHARS], result.method, result.error)
+            result = ExtractionResult(result.text[:MAX_CHARS], result.method, result.note)
 
         return result
 
     # ------------------------------------------------------------------
-    # Extractores por formato
+    # PDF — jerarquía de extractores
     # ------------------------------------------------------------------
 
-    def _extract_plain_text(self, file_path: Path) -> ExtractionResult:
-        for encoding in _TEXT_ENCODINGS:
-            try:
-                text = file_path.read_text(encoding=encoding)
-                return ExtractionResult(text, "plain", "")
-            except UnicodeDecodeError:
-                continue
-            except OSError as exc:
-                return ExtractionResult("", "plain", str(exc))
-        return ExtractionResult("", "plain", "No fue posible decodificar el archivo de texto")
-
     def _extract_pdf(self, file_path: Path) -> ExtractionResult:
-        # Intento 1: PyMuPDF (mejor calidad, mantiene estructura de párrafos)
+        """Intenta extraer texto de un PDF con múltiples métodos en orden de calidad."""
+
+        # Intento 1: pdfplumber — mejor para PDFs académicos con columnas y tablas
+        if self._has_pdfplumber:
+            result = self._extract_pdf_pdfplumber(file_path)
+            if len(result.text.strip()) >= _MIN_TEXT_LENGTH:
+                return result
+            logger.debug("pdfplumber: texto insuficiente en %s (%d chars)", file_path.name, len(result.text))
+
+        # Intento 2: PyMuPDF — rápido y preciso para PDFs normales
         if self._has_fitz:
             result = self._extract_pdf_fitz(file_path)
-            if result.text.strip():
+            if len(result.text.strip()) >= _MIN_TEXT_LENGTH:
                 return result
+            logger.debug("PyMuPDF: texto insuficiente en %s (%d chars)", file_path.name, len(result.text))
 
-        # Intento 2: pdftotext CLI
+        # Intento 3: pdftotext CLI
         if self._pdftotext:
             result = self._extract_pdf_pdftotext(file_path)
-            if result.text.strip():
+            if len(result.text.strip()) >= _MIN_TEXT_LENGTH:
+                return result
+            logger.debug("pdftotext: texto insuficiente en %s (%d chars)", file_path.name, len(result.text))
+
+        # Intento 4: OCR — PDF escaneado o con texto como imagen
+        if self.ocr_handler.available:
+            logger.info("PDF sin texto extraíble, intentando OCR: %s", file_path.name)
+            result = self.ocr_handler.extract_text(file_path)
+            if len(result.text.strip()) >= _MIN_TEXT_LENGTH:
                 return result
 
-        # Intento 3: regex básico sobre bytes (PDFs viejos sin estructura)
-        result = self._extract_pdf_regex(file_path)
-        if result.text.strip():
-            return result
+        # Último recurso: regex básico (puede producir basura pero es mejor que nada)
+        logger.warning(
+            "Todos los métodos fallaron para '%s' — usando regex básico. "
+            "El clustering puede ser impreciso para este archivo.",
+            file_path.name,
+        )
+        return self._extract_pdf_regex(file_path)
 
-        # Intento 4: OCR (PDF escaneado como imagen)
-        logger.info("PDF sin texto extraíble, intentando OCR: %s", file_path.name)
-        return self.ocr_handler.extract_text(file_path)
+    def _extract_pdf_pdfplumber(self, file_path: Path) -> ExtractionResult:
+        """Extrae texto con pdfplumber — excelente para PDFs académicos."""
+        try:
+            import pdfplumber
+            pages: list[str] = []
+            with pdfplumber.open(str(file_path)) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        pages.append(text)
+            return ExtractionResult("\n\n".join(pages), "pdf_pdfplumber", "")
+        except Exception as exc:
+            logger.warning("pdfplumber falló en %s: %s", file_path.name, exc)
+            return ExtractionResult("", "pdf_pdfplumber", str(exc))
 
     def _extract_pdf_fitz(self, file_path: Path) -> ExtractionResult:
+        """Extrae texto con PyMuPDF."""
         try:
-            import fitz  # PyMuPDF
+            import fitz
             pages: list[str] = []
             with fitz.open(str(file_path)) as doc:
                 for page in doc:
@@ -145,6 +161,7 @@ class TextExtractor:
             return ExtractionResult("", "pdf_fitz", str(exc))
 
     def _extract_pdf_pdftotext(self, file_path: Path) -> ExtractionResult:
+        """Extrae texto con pdftotext CLI."""
         try:
             result = subprocess.run(
                 [self._pdftotext, "-layout", str(file_path), "-"],
@@ -153,49 +170,52 @@ class TextExtractor:
                 text=True,
                 timeout=30,
             )
-            text = result.stdout.strip()
-            return ExtractionResult(text, "pdf_pdftotext", "")
+            return ExtractionResult(result.stdout.strip(), "pdf_pdftotext", "")
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("pdftotext falló en %s: %s", file_path.name, exc)
             return ExtractionResult("", "pdf_pdftotext", str(exc))
 
     def _extract_pdf_regex(self, file_path: Path) -> ExtractionResult:
+        """Extracción básica por regex — último recurso, puede producir ruido."""
         try:
             raw = file_path.read_bytes().decode("latin-1", errors="ignore")
             matches = re.findall(r"\(([^()]{4,200})\)", raw)
             cleaned = " ".join(
                 m for m in matches
-                if "/" not in m and "\\" not in m and len(m.split()) > 1
+                if "/" not in m
+                and "\\" not in m
+                and len(m.split()) > 1
+                # FIX: filtrar cadenas sin vocales (basura codificada)
+                and any(c in "aeiouáéíóúAEIOUÁÉÍÓÚ" for c in m)
             )
-            return ExtractionResult(cleaned, "pdf_regex", "Extracción básica sin pdftotext")
+            note = "Extracción básica — calidad limitada" if cleaned else "Sin texto extraíble"
+            return ExtractionResult(cleaned, "pdf_regex", note)
         except OSError as exc:
             return ExtractionResult("", "pdf_regex", str(exc))
 
+    # ------------------------------------------------------------------
+    # DOCX
+    # ------------------------------------------------------------------
+
     def _extract_docx(self, file_path: Path) -> ExtractionResult:
-        # Intento 1: python-docx (maneja tablas, cuadros de texto, headers)
         if self._has_docx:
             try:
                 from docx import Document
                 doc = Document(str(file_path))
                 parts: list[str] = []
-
-                # Párrafos del cuerpo
                 for para in doc.paragraphs:
                     if para.text.strip():
                         parts.append(para.text)
-
-                # Texto dentro de tablas
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
                             if cell.text.strip():
                                 parts.append(cell.text)
-
-                return ExtractionResult("\n".join(parts), "docx_python", "")
+                if parts:
+                    return ExtractionResult("\n".join(parts), "docx_python", "")
             except Exception as exc:
                 logger.warning("python-docx falló en %s: %s", file_path.name, exc)
 
-        # Fallback: XML manual (igual que el original)
         return self._extract_docx_xml(file_path)
 
     def _extract_docx_xml(self, file_path: Path) -> ExtractionResult:
@@ -216,8 +236,11 @@ class TextExtractor:
                 paragraphs.append("".join(texts))
         return ExtractionResult("\n".join(paragraphs), "docx_xml", "")
 
+    # ------------------------------------------------------------------
+    # PPTX
+    # ------------------------------------------------------------------
+
     def _extract_pptx(self, file_path: Path) -> ExtractionResult:
-        # Intento 1: python-pptx (extrae notas, cuadros de texto, SmartArt)
         if self._has_pptx:
             try:
                 from pptx import Presentation
@@ -231,18 +254,17 @@ class TextExtractor:
                                 text = para.text.strip()
                                 if text:
                                     slide_texts.append(text)
-                        # Notas del presentador
                     if slide.has_notes_slide:
-                        notes_text = slide.notes_slide.notes_text_frame.text.strip()
-                        if notes_text:
-                            slide_texts.append(f"[Notas: {notes_text}]")
+                        notes = slide.notes_slide.notes_text_frame.text.strip()
+                        if notes:
+                            slide_texts.append(f"[Notas: {notes}]")
                     if slide_texts:
                         slides.append(" ".join(slide_texts))
-                return ExtractionResult("\n".join(slides), "pptx_python", "")
+                if slides:
+                    return ExtractionResult("\n".join(slides), "pptx_python", "")
             except Exception as exc:
                 logger.warning("python-pptx falló en %s: %s", file_path.name, exc)
 
-        # Fallback: XML manual (igual que el original)
         return self._extract_pptx_xml(file_path)
 
     def _extract_pptx_xml(self, file_path: Path) -> ExtractionResult:
@@ -262,8 +284,11 @@ class TextExtractor:
             return ExtractionResult("", "pptx", str(exc))
         return ExtractionResult("\n".join(slides), "pptx_xml", "")
 
+    # ------------------------------------------------------------------
+    # DOC (Word 97-2003)
+    # ------------------------------------------------------------------
+
     def _extract_doc_fallback(self, file_path: Path) -> ExtractionResult:
-        """Intenta extraer texto de archivos .doc (Word 97-2003) con antiword."""
         antiword = shutil.which("antiword")
         if antiword:
             try:
@@ -278,11 +303,25 @@ class TextExtractor:
         return ExtractionResult("", "doc", "Formato .doc requiere antiword instalado")
 
     # ------------------------------------------------------------------
-    # Utilidades internas
+    # Texto plano
+    # ------------------------------------------------------------------
+
+    def _extract_plain_text(self, file_path: Path) -> ExtractionResult:
+        for encoding in _TEXT_ENCODINGS:
+            try:
+                text = file_path.read_text(encoding=encoding)
+                return ExtractionResult(text, "plain", "")
+            except UnicodeDecodeError:
+                continue
+            except OSError as exc:
+                return ExtractionResult("", "plain", str(exc))
+        return ExtractionResult("", "plain", "No fue posible decodificar el archivo")
+
+    # ------------------------------------------------------------------
+    # Utilidades
     # ------------------------------------------------------------------
 
     @staticmethod
     def _check_import(module: str) -> bool:
-        """Verifica si un módulo está disponible sin importarlo."""
         import importlib.util
         return importlib.util.find_spec(module) is not None

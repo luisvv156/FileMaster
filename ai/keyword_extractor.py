@@ -86,19 +86,31 @@ class _TFIDFEngine:
             unique_tokens = set(token_frequencies(text).keys())
             self._doc_freq.update(unique_tokens)
 
+
     def score(self, text: str, limit: int = DEFAULT_LIMIT) -> list[str]:
-        """Retorna los `limit` términos con mayor TF-IDF en `text`."""
         tf = token_frequencies(text)
         if not tf:
             return []
 
         n = max(self._n_docs, 1)
+        vowels = set("aeiouáéíóúü")
         scored: list[tuple[str, float]] = []
+        
         for term, freq in tf.items():
-            df = self._doc_freq.get(term, 0) + 1   # +1 para evitar log(0)
+            # ✅ Filtros de calidad
+            if len(term) < 4:
+                continue
+            if not term.isalpha():
+                continue
+            vowel_ratio = sum(1 for ch in term if ch in vowels) / len(term)
+            if vowel_ratio < 0.20:          # sin vocales = basura
+                continue
+            if term.isupper() and len(term) <= 4:   # siglas cortas
+                continue
+
+            df = self._doc_freq.get(term, 0) + 1
             idf = math.log(n / df) + 1
-            tfidf = freq * idf
-            scored.append((term, tfidf))
+            scored.append((term, freq * idf))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return [term for term, _ in scored[:limit]]
@@ -174,9 +186,12 @@ class KeywordExtractor:
         candidates = self._tfidf.score(cleaned, limit=limit * 3)
 
         if not candidates:
-            # Fallback: frecuencia pura si TF-IDF no devuelve nada
             freq = token_frequencies(cleaned)
-            candidates = [t for t, _ in freq.most_common(limit * 3)]
+            # ✅ Filtrar tokens cortos y muy genéricos
+            candidates = [
+                t for t, _ in freq.most_common(limit * 3)
+                if len(t) >= 4  # descartar palabras de 1-3 letras
+            ]
 
         # Paso 2: filtrar por POS con spaCy (si disponible)
         lang = detect_language(cleaned)

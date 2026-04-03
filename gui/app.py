@@ -104,10 +104,9 @@ def run_app() -> None:
     setup_logging()
 
     # Controller
-    api = FileMasterAPI.__new__(FileMasterAPI)
-
-    controller = FileMasterController(notify_callback=lambda: api.push_snapshot())
-    api.__init__(controller)
+    controller = FileMasterController()
+    api = FileMasterAPI(controller)
+    controller.notify_callback = api.push_snapshot
 
     # Detectar pantalla inicial
     initial_screen = "welcome"
