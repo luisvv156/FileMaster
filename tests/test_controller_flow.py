@@ -38,7 +38,14 @@ class FileMasterControllerFlowTest(unittest.TestCase):
 
         importlib.reload(settings_module)
         importlib.reload(controller_module)
-        self.temp_dir.cleanup()
+        
+        import time
+        time.sleep(1)
+        
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def test_full_analysis_confirmation_and_followup_organization_flow(self) -> None:
         self._write_file("ia_doc_1.txt", "red neuronal algoritmo aprendizaje profundo")

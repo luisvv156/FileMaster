@@ -1,5 +1,4 @@
 """Controlador principal de FileMaster."""
-
 from __future__ import annotations
 
 import json
@@ -7,16 +6,18 @@ import logging
 import threading
 import time
 import uuid
+import re
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+from ai.hint_classifier import classify_by_hints, get_multi_categories
 from ai.classifier import DocumentClassifier
 from ai.clustering import DocumentClusterer
 from ai.embeddings import EmbeddingService, centroid
 from ai.keyword_extractor import KeywordExtractor
-from ai.text_utils import title_from_keywords
+from ai.text_utils import title_from_keywords, generate_category_name
 from config.settings import (
     DEFAULT_DUPLICATES_FOLDER_NAME,
     HISTORY_DB_PATH,
@@ -38,11 +39,302 @@ from core.text_extractor import TextExtractor
 from core.watcher import FileWatcher
 
 
+# Categorías especializadas tienen prioridad sobre genéricas
+# Orden: más específica primero
+CATEGORY_PRIORITY = {
+    "Hacking Etico": 1,
+    "Ciberseguridad": 2,
+    "Inteligencia Artificial": 3,
+    "Base de Datos": 4,
+    "Administracion de Redes": 5,
+    "Desarrollo Web": 6,
+    "Desarrollo Movil": 7,
+    "Tecnologias de Virtualizacion": 8,
+    "Tecnologias en la Nube": 9,
+    "Taller de Investigacion": 10,
+    "Programacion Logica y Funcional": 11,
+    "Desarrollo de Software": 12,
+    "Arquitectura de Computadoras": 13,
+    "Sistemas Operativos": 14,
+    "Matematicas Discretas": 15,
+    "Estadistica": 16,
+    "Ciencia de Datos": 17,
+}
+
 KNOWN_CATEGORY_HINTS = {
-    "Inteligencia Artificial": {"red", "neuronal", "algoritmo", "clasificacion", "aprendizaje", "modelo", "ia"},
-    "Redes de Computadoras": {"router", "switch", "tcp", "ip", "latencia", "protocolo", "firewall"},
-    "Base de Datos": {"sql", "consulta", "joins", "indice", "normalizacion", "tabla", "relacional"},
-    "Sistemas Operativos": {"kernel", "memoria", "proceso", "scheduler", "hilo", "sistema"},
+    "Inteligencia Artificial": {
+        "ia", "ai", "inteligenciaartificial", "machine", "learning", "ml", "redneuronal",
+        "algoritmo", "clasificacion", "regresion", "clustering", "aprendizaje",
+        "entrenamiento", "modelo", "prediccion", "embedding", "embeddings",
+        "transformer", "nlp", "deeplearning", "dl", "backpropagation",
+        "tensorflow", "pytorch", "keras", "perceptron", "overfitting", "underfitting",
+        "neuralnetwork", "cnn", "rnn", "lstm", "gru", "dataset", "dataloader",
+        "train", "test", "validation", "accuracy", "loss", "optimizer",
+        "precision", "recall", "f1score", "auc", "roc", "confusion", "metric",
+        "regresionlineal", "regresionlogistica", "clasificador", "supervisado", "no-supervisado",
+        "kmeans", "knn", "svm", "randomforest", "xgboost", "gradientboosting",
+        "generativo", "discriminativo", "bayes", "naive", "decisiontree", "arbol",
+        "optimizacion", "gradiente", "descenso", "adam", "sgd", "rmsprop",
+        "token", "tokenizer", "word2vec", "bert", "gpt", "llm", "langchain",
+        "rag", "prompt", "fine-tuning", "transferlearning", "huggingface",
+        "yolo", "objectdetection", "segmentation", "vision", "computer",
+        "reinforcement", "qlearning", "dqn", "policy", "reward", "environment",
+        "autoencoder", "vae", "gan", "diffusion", "stable", "midjourney"
+    },
+    "Base de Datos": {
+        "sqldatabase", "mysql", "postgresql", "postgres", "oracle", "mariadb", "db",
+        "sql", "query", "joins", "normalizacion", "normalforms", "relacional",
+        "mongodb", "redis", "sqlite", "nosql", "database", "databases",
+        "mysqlworkbench", "phpmyadmin", "dbeaver", "sequelpro", "datagrip",
+        "tabla", "fila", "columna", "registro", "tupla", "campo", "indice", "index",
+        "primarykey", "foreignkey", "primary", "secondary", "unique", "check", "constraint",
+        "cursor", "transaccion", "commit", "rollback", "savepoint",
+        "storedprocedure", "storedfunction", "procedure", "function", "trigger",
+        "view", "views", "materialized", "routine", "udf",
+        "select", "insert", "update", "delete", "create", "alter", "drop",
+        "where", "groupby", "having", "orderby", "order", "limit", "offset",
+        "inner", "left", "right", "outer", "cross", "full", "natural", "self",
+        "er", "modeloer", "diagramaer", "cardinalidad", "participacion",
+        "ddl", "dml", "dcl", "tcl", "backup", "restore", "replication",
+        "partitioning", "sharding", "clustering", "ha", "failover", "rac",
+        "connectionpool", "pool", "isolation", "lock", "deadlock", "transaction"
+    },
+    "Administracion de Redes": {
+        "redes", "redesdecomputadoras", "redesdearea", "lan", "man", "wan",
+        "router", "switch", "hub", "bridge", "modem", "protocolo",
+        "tcpip", "tcp", "udp", "icmp", "ipv4", "ipv6", "ip",
+        "subred", "subnet", "vlan", "vlanid", "ospf", "bgp", "eigrp", "rip",
+        "dns", "dhcp", "nat", "pat", "抽", "gateway", "default",
+        "cisco", "ccna", "ccnp", "ccie", "packettracer", "gns3", "ciscoios",
+        "ethernet", "wifi", "wlan", "inalambrico", "wireless", "accesspoint",
+        "snmp", "nms", "zabbix", "nagios", "monitor", "monitoring", "prometheus",
+        "traceroute", "tracert", "ping", "netstat", "ipconfig", "ifconfig", "nslookup",
+        "dig", "host", "arp", "mac", "dnssec", "ddns",
+        "firewall", "acl", "vty", "console", "telnet", "ssh", "rdp",
+        "vpn", "ipsec", "tunnel", "gre", "mpls", "openvpn", "wireguard",
+        "topologia", "anillo", "estrella", "bus", "malla", "hibrida",
+        " bandwidth", "latency", "jitter", "packetloss", "throughput", "qos",
+        "loadbalancer", "balanceador", "cdn", "cache", "proxy", "reverse",
+        "multicast", "broadcast", "unicast", "anycast", "IGMP", "ARP"
+    },
+    "Hacking Etico": {
+        "pentest", "penetration", "testing", "pentesting", "vulnerabilidad", "vuln",
+        "exploit", "cve", "cwe", "owasp", "nist", "iso27001",
+        "nmap", "zenmap", "escaneo", "scan", "puertos", "portscan", "fingerprinting",
+        "metasploit", "msfconsole", "msfvenom", "meterpreter", "armitage",
+        "kali", "linux", "backbox", "parrot", "blackarch", "whonix",
+        "burp", "owaspzap", "sqlmap", "nikto", "gobuster", "dirb",
+        "hydra", "john", "hashcat", "cracking", "password", "credential",
+        "reverse", "shell", "bind", "payload", "msf",
+        "buffer", "overflow", "formatstring", "integer", "racecondition",
+        "xss", "csrf", "sqli", "rce", "lfi", "rfi", "xxe", "ssrf",
+        "infogathering", "recon", "footprinting", "osint",
+        "enumeration", "privilege", "escalation", "privesc",
+        "persistence", "pivoting", "covering", "tracks", "forensics",
+        "malware", "ransomware", "trojan", "virus", "worm", "spyware",
+        "phishing", "spearphishing", "whaling", "socialengineering",
+        "WAF", "IDS", "IPS", "SIEM", "SOC", "log", "logging"
+    },
+    "Tecnologias de Virtualizacion": {
+        "virtualizacion", "virtualization", "vmware", "virtualbox", "hyperv", "qemu", "kvm",
+        "hypervisor", "type1", "type2", "baremetal", "hosted",
+        "contenedor", "container", "docker", "kubernetes", "k8s", "openshift",
+        "containerd", "podman", "CRI-O", "containerruntime",
+        "dockerfile", "dockercompose", "docker-compose", "helmchart", "helm",
+        "imagenvm", "snapshot", "snapshotting", "clon", "clone", "template",
+        "esxi", "vcenter", "vsphere", "vrealize", "vcloud", "vcac",
+        "proxmox", "pve", "ceph", "glusterfs", "cinder", "swift",
+        "vagrant", "packer", "terraform", "ansible", "cloudinit",
+        "iso", "ovf", "ova", "vmdk", "qcow2", "vdi", "img",
+        "bridged", "bridging", "nat", "hostonly", "host-only", "internal", "redinterna"
+    },
+    "Tecnologias en la Nube": {
+        "nube", "cloud", "cloudcomputing", "iaas", "paas", "saas", "faas", "baas",
+        "aws", "amazon", "azure", "googlecloud", "gcp", "digitalocean", "linode",
+        "ec2", "s3", "lambda", "ecs", "eks", "rds", "dynamodb", "cloudfront",
+        "azurevm", "azurefunctions", "aks", "aks", "azureadb", "keyvault", "cosmosdb",
+        "gcpcompute", "gcpfunctions", "gke", "gcpstorage", "bigquery", "cloudstorage",
+        "serverless", "functions", "functionas", "microservices", "microservicio",
+        "iam", "identity", "role", "policy", "secret", "key", "token", "oauth",
+        "bucket", "storage", "blob", "cdn", "cloudfront", "elb", "alb", "nlb",
+        "terraform", "cloudformation", "cdk", "sam", "serverless",
+        "cicd", "pipeline", "codebuild", "codedeploy", "codepipeline", "githubactions",
+        "cloudwatch", "logs", "metrics", "monitoring", "sns", "sqs", "kinesis",
+        "grafana", "prometheus", "datadog", "newrelic", "logsinsights",
+        "vpc", "subnet", "route53", "cloudfront", "apigateway", "loadbalancer",
+"efs", "fsx", "storagegateway", "glacier", "s3glacier"
+    },
+    "Taller de Investigacion": {
+        "investigacion", "investigacionde", "research", "investigative",
+        "metodologia", "metodologico", "methodology", "method",
+        "hipotesis", "hypothesis", "objetivo", "objective", "goal", "problema", "problem",
+        "justificacion", "justification", "rationale",
+        "marco", "teorico", "conceptual", "legal", "framework",
+        "bibliografia", "referencia", "bibliography", "reference",
+        "cita", "quotation", "apa", "normas apa", "citation",
+        "resumen", "abstract", "summary", "introduccion", "introduction",
+        "resultado", "resultados", "results", "conclusion", "conclusions",
+        "recomendacion", "recommendation", "suggestion",
+        "tesis", "tesina", "monografia", "thesis", "dissertation",
+        "encuesta", "questionnaire", "survey", "entrevista", "interview", "observation",
+        "cuestionario", "instrument", "instruments", "muestra", "sample", "sampling",
+        "cuantitativo", "quantitative", "cualitativo", "qualitative", "mixto", "mixed", "method",
+        "proyecto", "project", "informe", "report", "reporte", "deliverable",
+        "documento", "document", "articulo", "article", "paper", "publication",
+        "googleacademico", "scholar", "researchgate", "academia", "arxiv",
+        "moodle", "lms", "canvas", "blackboard", "aula", "classroom", "campusvirtual",
+        "variable", "dependent", "independent", "correlation", "causality",
+        "poblacion", "population", "muestral", "sampling", "confianza",
+        "significancia", "significance", "alpha", "beta", "p-value"
+    },
+    "Programacion Logica y Funcional": {
+        "prolog", "haskell", "lisp", "scheme", "erlang", "elixir", "clojure", "F#",
+        "funcional", "functional", "logica", "logical", "logicprogramming",
+        "predicado", "predicate", "clausula", "clause", "fact", "rule",
+        "recursion", "recursive", "tail", "tailcall", "accumulator",
+        "lambda", "closure", "curry", "currying", "partial", "application",
+        "matching", "pattern", "unification", "backtracking", "OccursCheck",
+        "inmutable", "immutable", "inmutability", "pure", "purity", "sideeffect",
+        "lazy", "evaluation", "eager", "monad", "functor", "applicative",
+        "inferencia", "inference", "type", "polymorphic", "generic",
+        "declarativo", "declarative", "declarativeprogramming",
+        "higherorder", "firstclass", "combinator", "composition",
+        "tree", "list", "algebraic", "adt", "sumtype", "producttype"
+    },
+    "Desarrollo Web": {
+        "html", "html5", "html", "css", "css3", "sass", "scss", "less",
+        "javascript", "js", "typescript", "ts", "ecmascript",
+        "react", "reactjs", "angular", "angularjs", "vue", "vuejs", "svelte",
+        "frontend", "front-end", "backend", "back-end", "fullstack", "full-stack",
+        "api", "apis", "rest", "restful", "graphql", "gql",
+        "http", "https", "http2", "http3", "request", "response",
+        "bootstrap", "tailwind", "bulma", "material", "responsive", "adaptive", "mobilefirst",
+        "dom", "bom", "ajax", "fetch", "axios", "json", "xml", "html",
+        "web", "website", "sitio", "page", "navegador", "browser", "chrome", "firefox",
+        "servidor", "server", "hosting", "dominio", "domain", "dns", "ssl", "tls", "https",
+        "cookie", "session", "localstorage", "cors", "csrf", "xss",
+        "webpack", "vite", "rollup", "parcel", "esbuild", "babel", "postcss",
+        "pwa", "progressive", "webapp", "manifest", "serviceworker"
+    },
+    "Desarrollo Movil": {
+        "html", "css", "javascript", "react", "angular", "vue",
+        "frontend", "backend", "fullstack", "api", "rest", "graphql",
+        "http", "css", "bootstrap", "tailwind", "responsive", "dom",
+        "ajax", "json", "xml", "web", "navegador", "servidor", "hosting", "dominio"
+    },
+    "Desarrollo Movil": {
+        "android", "androidstudio", "ios", "swift", "objectivec",
+        "flutter", "dart", "reactnative", "xamarin", "kotlin", "jetpack",
+        "mobile", "app", "aplicacion", "aplicativo", "celular", "tablet", "smartphone",
+        "gradle", "maven", "cocoapods", "sdk", "ndk", "api", "apis",
+        "playstore", "googleplay", "appstore", "appstoreconnect", "fdroid",
+        "ui", "ux", "ui design", "materialdesign", "material",
+        "activity", "fragment", "intent", "broadcast", "service",
+        "view", "viewmodel", "livedata", "navigation", "room", "sqlite",
+        "constraintlayout", "linearlayout", "relativelayout", "recyclerview",
+        "coroutines", "async", "thread", "background", "foreground"
+    },
+    "Desarrollo de Software": {
+        "software", "development", "developer", "programacion", "programming",
+        "agile", "agile", "scrum", "kanban", "sprint", "standup",
+        "uml", "diagram", "use", "case", "sequence", "class", "activity",
+        "requirement", "requerimiento", "specification", "spec", "Functional", "NonFunctional",
+        "testing", "test", "unittest", "integration", "e2e", "automation",
+        "tdd", "bdd", "testdriven", "behaviordriven",
+        "refactoring", "code", "smell", "technicaldebt",
+        "designpatterns", "singleton", "factory", "observer", "strategy", "decorator",
+        "solid", "principles", "solidprinciples", "clean", "cleancode",
+        "versioncontrol", "git", "github", "gitlab", "bitbucket", "svn",
+        "branch", "merge", "pull", "push", "commit", "revert", "cherrypick",
+        "code review", "review", "pr", "mr", "cr", "approval"
+    },
+    "Ciberseguridad": {
+        "seguridad", "ciberseguridad", "cybersecurity", "infosec", "security",
+        "criptografia", "cryptography", "encryption", "encriptacion", "decryption",
+        "cipher", "aes", "rsa", "sha", "md5", "hash", "hashing", "salt",
+        "firewall", "fw", "waf", "ips", "ids", "idss", "siem", "soc", "xdr",
+        "autenticacion", "authentication", "auth", "authorization", "oauth", "oauth2", "saml", "sso",
+        "ldap", "active directory", "ad", "kerberos", "ntlm", "basic", "digest",
+        "malware", "malicious", "virus", "worm", "trojan", "ransomware", "spyware", "adware",
+        "phishing", "spearphishing", "vishing", "smishing", "whaling", "socialengineering",
+        "apt", "threat", "attacker", "attck", "mitre", "framework",
+        "zero-day", "exploit", "vulnerability", "cve", "cwe", "owasp",
+        "incident", "response", "forensics", "malwareanalysis", "reverseengineering",
+        "penetration", "assessment", "audit", "vulnerabilityassessment",
+        "hardening", "patch", "update", "vulnerabilitymanagement"
+    },
+    "Ciencia de Datos": {
+        "data", "datos", "analytics", "analitica", "dataanalytics", "dataanalysis",
+        "bigdata", "big data", "hadoop", "spark", "databricks", "flink",
+        "pandas", "numpy", "scipy", "matplotlib", "seaborn", "plotly",
+        "visualization", "visualizacion", "dashboard", "tableau", "powerbi", "looker",
+        "etl", "elt", "pipeline", "datapipeline", "airflow", "luigi",
+        "datawarehouse", "dw", "datalake", "warehouse", "lakehouse",
+        "statistics", "estadistica", "descriptive", "inferential", "probability",
+        "hypothesis", "testing", "significance", "pvalue", "confidence",
+        "regression", "correlation", "anova", "chi-square", "t-test",
+        "machinelearning", "ml", "supervised", "unsupervised", "semi",
+        "neural", "deep", "reinforcement", "recommendation", "collaborative",
+        "feature", "engineering", "selection", "extraction", "scaling", "encoding",
+        "confusionmatrix", "accuracy", "precision", "recall", "f1", "auc", "roc",
+        "eda", "exploratory", "analysis", "preprocessing", "cleaning", "wrangling",
+        "python", "r", "scala", "julia", "sql", "nosql"
+    },
+    "Arquitectura de Computadoras": {
+        "arquitectura", "architecture", "computer", "computers", "cpu", "procesador",
+        "gpu", "graphics", "nvidia", "amd", "intel", "ram", "memoria", "memory",
+        "storage", "almacenamiento", "ssd", "hdd", "disk", " disco",
+        "assembly", "ensamblador", "assembler", "masm", "nasm", "gas",
+        "instruction", "instructionset", "isa", "opcode", "operand", "register",
+        "registers", "pc", "sp", "bp", "si", "di", "ax", "bx", "cx", "dx",
+        " interrupt", " irq", "dma", "paging", "segmentation", "virtualmemory",
+        "cache", "l1", "l2", "l3", "Associative", "tlb", "mmu",
+        "bus", "address", "data", "controlbus", "systembus", "frontside",
+        "pipeline", "hazard", "stall", "bubble", "branchprediction",
+        " alu", "cu", "cu", "寄存器", "decoder", "encoder", "multiplexer"
+    },
+    "Sistemas Operativos": {
+        "so", "os", "operativo", "operative", "operative",
+        "windows", "win", "windows10", "windows11", "winserver",
+        "linux", "ubuntu", "debian", "fedora", "centos", "redhat", "arch",
+        "macos", "apple", "ios", "darwin", "unix", "freebsd", "openbsd",
+        "kernel", " kernel", "shell", "bash", "zsh", "fish", "terminal", "console",
+        "process", "proceso", "thread", "hilo", "scheduling", "scheduler",
+        "memory", "virtual", "paging", "swapping", "allocation",
+        "file", "filesystem", "fs", "ntfs", "ext4", "btrfs", "apfs",
+        "device", "driver", "device driver", "kernel module",
+        "systemcall", "syscall", "api", "interrupt", "exception", "trap",
+        "multitasking", "multiprogramming", "timesharing", "real-time",
+        "concurrency", "parallelism", "deadlock", "starvation", "priorityinversion"
+    },
+    "Matematicas Discretas": {
+        "discreta", "discrete", "mathematics", "logica", "logic", "set", "conjunto",
+        "relation", "relacion", "function", "funcion", "mapping",
+        "graph", "grafo", "vertex", "vertice", "edge", "arista", "node",
+        "path", "camino", "cycle", "ciclo", "path", "circuit",
+        "tree", "arbol", "root", "leaf", "branch", "subtree",
+        "directed", "undirected", "weighted", "unweighted",
+        "bfs", "dfs", "dijkstra", "bellman", "floyd", "prim", "kruskal",
+        "topological", "ordering", "sorting", "dag", "network", "flow",
+        "combinatorics", "combination", "permutation", "principle", "inclusion", "pigeonhole",
+        "recurrence", "recursion", "induction", "proof", "theorem", "lemma",
+        "boolean", "algebra", "gate", "circuit", "truth", "table",
+        "modular", "arithmetic", "congruence", "gcd", "lcm", "prime"
+    },
+    "Estadistica": {
+        "estadistica", "statistics", "statistic", "descriptive", "inferential",
+        "mean", "media", "median", "moda", "mode", "variance", "varianza",
+        "deviation", "desviacion", "standard", "standarddeviation",
+        "distribution", "distribucion", "normal", "gaussian", "binomial", "poisson", "exponential",
+        "probability", "probabilidad", "random", "aleatorio", "stochastic",
+        "sample", "muestra", "population", "poblacion", "sampling", "muestreo",
+        "hypothesis", "testing", "test", "prueba", "significance", "significancia",
+        "p-value", "alpha", "beta", "confidence", "interval", "confidenceinterval",
+        "correlation", "correlation", "regression", "regresion",
+        "anova", "manova", "t-test", "chisquare", "kolmogorov", "smirnov",
+        "bayesian", "bayes", "prior", "posterior", "likelihood",
+        "estimator", "estimador", "bias", "unbiased", "efficient"
+    },
 }
 
 logger = logging.getLogger(__name__)
@@ -97,6 +389,14 @@ class FileMasterController:
 
     def has_configuration(self) -> bool:
         return self.config.is_configured and self.config.watch_path is not None and self.config.watch_path.exists()
+    
+    def _require_watch_folder(self) -> Path:
+        if not self.config.watch_path or not self.config.watch_path.exists():
+            raise RuntimeError(
+                f"La carpeta de monitoreo no existe o no está configurada: "
+                f"'{self.config.watch_folder}'"
+                )
+        return self.config.watch_path
 
     def update_config(self, watch_folder: str, auto_rename: bool, detect_duplicates: bool) -> None:
         clean_watch_folder = watch_folder.strip()
@@ -148,7 +448,9 @@ class FileMasterController:
         proposals: list[GroupProposal] = []
         for index, documents_in_group in enumerate(grouped_documents.values(), start=1):
             keywords = self._keywords_for_documents(documents_in_group)
-            name = self._suggest_category_name(keywords)
+            representative_path = Path(documents_in_group[0].path) if documents_in_group else None
+            group_text = " ".join(doc.text or "" for doc in documents_in_group[:3])
+            name = self._suggest_category_name(keywords, text=group_text)
             proposals.append(
                 GroupProposal(
                     group_id=f"group-{index}",
@@ -177,26 +479,41 @@ class FileMasterController:
         if not documents:
             return {}
 
-        group_assignments: dict[str, str] = {}
-        categories_payload = []
+        # ✅ Mismo nombre = misma carpeta (fusión, no duplicado numerado)
+        group_to_folder: dict[str, str] = {}
         for group_id, group in proposals.items():
-            name = (mapping.get(group_id) or group["suggested_name"]).strip() or group["suggested_name"]
-            group_assignments[group_id] = name
-            categories_payload.append(
-                {
-                    "name": name,
-                    "keywords": group["keywords"],
-                    "files": group["file_names"],
-                }
-            )
+            name = (mapping.get(group_id) or group["suggested_name"]).strip()
+            if not name:
+                name = group["suggested_name"]
+            group_to_folder[group_id] = name
 
+        # Construir categories_payload sin duplicar nombres
+        seen_names: dict[str, dict] = {}
+        for group_id, group in proposals.items():
+            name = group_to_folder[group_id]
+            if name in seen_names:
+                # ✅ Fusionar keywords y files en la entrada existente
+                seen_names[name]["keywords"] = list(set(
+                    seen_names[name]["keywords"] + group["keywords"]
+                ))
+                seen_names[name]["files"].extend(group["file_names"])
+            else:
+                seen_names[name] = {
+                    "name": name,
+                    "keywords": list(group["keywords"]),
+                    "files": list(group["file_names"]),
+                }
+
+        categories_payload = list(seen_names.values())
         save_categories(categories_payload)
         self.state["categories"] = categories_payload
 
+        # Asignar carpeta a cada documento por doc_id
         assignment_by_doc: dict[str, str] = {}
-        for group in pending_groups:
+        for group_id, group in proposals.items():
+            folder_name = group_to_folder[group_id]
             for document_id in group["file_ids"]:
-                assignment_by_doc[document_id] = group_assignments[group["group_id"]]
+                assignment_by_doc[document_id] = folder_name
 
         for document in documents:
             document.assigned_category = assignment_by_doc.get(document.doc_id)
@@ -212,29 +529,31 @@ class FileMasterController:
 
     def organize_now(self) -> dict[str, object]:
         watch_path = self._require_watch_folder()
-        if not load_categories():
+        categories = load_categories()
+        
+        # ✅ Verificar que haya categorías CON keywords, no solo que existan
+        has_usable_categories = any(
+            cat.get("keywords") or cat.get("files")
+            for cat in categories
+        )
+        # Las DEFAULT_ACADEMIC_CATEGORIES tienen keywords → has_usable_categories=True
+        # Esto evita el bloqueo innecesario de "confirma los grupos"
+        
+        if not categories:
             proposals = self.analyze_initial()
             if proposals:
-                self.state["status_message"] = "Se detectaron documentos nuevos. Confirma los grupos sugeridos para continuar."
+                self.state["status_message"] = "Confirma los grupos sugeridos para continuar."
                 self._notify()
-                logger.info("Organizacion detenida a la espera de confirmacion de grupos | grupos=%s", len(proposals))
                 return self._empty_summary()
+        
         incoming = self._collect_documents(self._incoming_files(watch_path))
         if not incoming:
             self.state["status_message"] = "No hay archivos nuevos para organizar."
             self._notify()
-            logger.info("Organizacion manual sin archivos nuevos | carpeta=%s", watch_path)
             return self.state.get("last_summary", {})
 
         summary = self._organize_documents(incoming)
         self.refresh_runtime_state(last_summary=summary)
-        logger.info(
-            "Organizacion manual completada | detectados=%s | organizados=%s | duplicados=%s | sin_clasificar=%s",
-            summary.get("detected", 0),
-            summary.get("organized", 0),
-            summary.get("duplicates", 0),
-            summary.get("unclassified", 0),
-        )
         self._notify()
         return summary
 
@@ -415,6 +734,9 @@ class FileMasterController:
         *,
         explicit_assignments: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        all_texts = [doc.text for doc in documents if doc.text]
+        if all_texts:
+            self.keyword_extractor.fit_corpus(all_texts)
         start = time.perf_counter()
         explicit_assignments = explicit_assignments or {}
         watch_path = self._require_watch_folder()
@@ -455,26 +777,46 @@ class FileMasterController:
 
             assigned = explicit_assignments.get(document.doc_id)
             confidence = 1.0 if assigned else 0.0
+ 
             if not assigned:
+                # ── Paso 1: hints con análisis multi-categoría ──
+                multi_results = get_multi_categories(
+                    document.text or "",
+                    KNOWN_CATEGORY_HINTS,
+                )
+                if multi_results:
+                    # Usar la categoría principal
+                    assigned, confidence = multi_results[0]
+                    # Log para debugging
+                    if len(multi_results) > 1:
+                        logger.info(
+                            "Multi-categoría detectada: %s -> %s (alternativas: %s)",
+                            document.name,
+                            assigned,
+                            [f"{c}({s:.2f})" for c, s in multi_results[1:]]
+                        )
+ 
+            if not assigned:
+                # ── Paso 2: similitud por embedding con centroides ──
                 label, confidence = self.classifier.classify(
                     document.embedding,
                     {category.name: category.centroid for category in categories if category.centroid},
                     similarity_threshold=self.config.similarity_threshold,
                 )
                 assigned = label
-                if not assigned:
-                    assigned, confidence = self._classify_by_keywords(document.keywords, categories)
+ 
+            if not assigned:
+                # ── Paso 3: keywords por Jaccard (fallback ligero) ──
+                assigned, confidence = self._classify_by_keywords(document.keywords, categories)
 
-            if not assigned or not (document.text.strip() or document.keywords):
+            if not assigned:
                 cycle.unclassified += 1
-                unclassified_notes.append(
-                    {
-                        "path": document.path,
-                        "name": document.name,
-                        "reason": document.extraction_note or "No se encontro texto suficiente para clasificarlo.",
-                        "keywords": document.keywords,
-                    }
-                )
+                unclassified_notes.append({
+                    "path": document.path,
+                    "name": document.name,
+                    "reason": document.extraction_note or "No se encontró categoría.",
+                    "keywords": document.keywords,
+                })
                 continue
 
             destination = self.organizer.organize(
@@ -484,6 +826,12 @@ class FileMasterController:
                 auto_rename=self.config.auto_rename,
                 keywords=document.keywords,
             )
+            if destination is None:
+                logger.warning("organize() retornó None para '%s', omitiendo.", source.name)
+                cycle.unclassified += 1
+                unclassified_notes.append({"path": document.path, "name": document.name, "reason": "El archivo no pudo moverse.", "keywords": document.keywords})
+                continue
+
             self._update_duplicate_item_path(persisted_duplicate_groups, document.doc_id, destination, Path(document.path))
             folder_counter[assigned] += 1
             cycle.organized += 1
@@ -538,11 +886,21 @@ class FileMasterController:
             documents = by_name.get(name, [])
             keywords = self._keywords_for_documents(documents) or list(item.get("keywords", []))
             vectors = [document.embedding for document in documents if document.embedding]
+
+            if vectors:
+                computed_centroid = centroid(vectors)
+            elif keywords:
+                # ✅ Centroide sintético: embed las keywords como texto
+                synthetic_text = " ".join(keywords)
+                computed_centroid = self.embedder.embed(synthetic_text)
+            else:
+                computed_centroid = []
+
             categories.append(
                 CategoryProfile(
                     name=name,
                     keywords=keywords,
-                    centroid=centroid(vectors) if vectors else [],
+                    centroid=computed_centroid,
                     files=[document.path for document in documents],
                 )
             )
@@ -554,12 +912,43 @@ class FileMasterController:
             counter.update(document.keywords)
         return [token for token, _count in counter.most_common(limit)]
 
-    def _suggest_category_name(self, keywords: list[str]) -> str:
-        keyword_set = set(keywords)
-        for name, hints in KNOWN_CATEGORY_HINTS.items():
-            if keyword_set.intersection(hints):
+    def _suggest_category_name(self, keywords: list[str], text: str = "") -> str:
+            # Paso 1: buscar hints en el texto si está disponible
+            if text:
+                hint_label, hint_conf = classify_by_hints(text, KNOWN_CATEGORY_HINTS)
+                if hint_label and hint_conf >= 0.80:
+                    return hint_label
+    
+            # Paso 2: buscar en keywords directamente contra hints (REQUIERE minimo 2 hits)
+            keyword_set = set(kw.lower() for kw in keywords)
+            best_name = None
+            best_hits = 0
+            for name, hint_words in KNOWN_CATEGORY_HINTS.items():
+                hits = len(keyword_set.intersection(hint_words))
+                if hits > best_hits:
+                    best_name  = name
+                    best_hits  = hits
+    
+            # REQUIERE al menos 2 keywords en comun para clasificar
+            if best_name and best_hits >= 2:
+                return best_name
+    
+            # Si no hay suficientes coincidencias, generar nombre desde keywords
+            # NO devolver None - siempre debe haber un nombre
+            if keywords:
+                name = generate_category_name(keywords)
+                if name == "Archivos Varios":
+                    name = title_from_keywords(keywords, fallback=f"Grupo {len(keywords)}")
+                logger.warning(
+                    "Clasificacion por keywords: keywords=%s, best_hits=%d, name=%s",
+                    keywords[:3], best_hits, name
+                )
                 return name
-        return title_from_keywords(keywords, fallback="Grupo Academico")
+            
+            # Si ni siquiera hay keywords, usar nombre genérico
+            logger.warning("Sin keywords para clasificar, usando fallback")
+            return "Archivos Varios"
+            return title_from_keywords(keywords, fallback="Grupo Academico")
 
     def _classify_by_keywords(
         self,
@@ -583,7 +972,7 @@ class FileMasterController:
                 best_name = category.name
                 best_score = score
 
-        if best_name and best_score >= 0.18:
+        if best_name and best_score >= 0.08:
             return best_name, best_score
         return None, best_score
 
@@ -725,20 +1114,16 @@ class FileMasterController:
 
     def _handle_watcher_event(self) -> None:
         if not self._busy.acquire(blocking=False):
+            logger.debug("Watcher: evento ignorado, organización en curso")
             return
         try:
+            self.watcher.pause()
             self.organize_now()
         except Exception:
-            logger.exception("Error durante la ejecucion del watcher")
+            logger.exception("Error durante la ejecución del watcher")
         finally:
             self._busy.release()
-
-    def _require_watch_folder(self) -> Path:
-        watch_path = self.config.watch_path
-        if watch_path is None:
-            raise ValueError("La carpeta monitoreada no ha sido configurada.")
-        self.file_manager.ensure_folder(watch_path)
-        return watch_path
+            self.watcher.resume()
 
     def _notify(self) -> None:
         if self.notify_callback:

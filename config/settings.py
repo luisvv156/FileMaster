@@ -19,7 +19,6 @@ def _resolve_app_state_dir() -> Path:
     override = os.getenv("FILEMASTER_HOME", "").strip()
     if override:
         return Path(override).expanduser()
-
     if sys.platform == "win32":
         base = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
     elif sys.platform == "darwin":
@@ -49,27 +48,114 @@ LOG_FILE_PATH = LOG_DIR / "filemaster.log"
 
 DEFAULT_DUPLICATES_FOLDER_NAME = "_Duplicados"
 WATCH_INTERVAL_SECONDS = 3.0
-DEFAULT_SIMILARITY_THRESHOLD = 0.26
+
+# ═══════════════════════════════════════════════════════════════
+# EXTREME MODE - Máxima precisión en clasificación
+# ═══════════════════════════════════════════════════════════════
+
+# Strict thresholds - solo класифицируются con alta confianza
+DEFAULT_SIMILARITY_THRESHOLD = 0.65  # Mayor umbral = más precisión
+DEFAULT_CLUSTERING_THRESHOLD = 0.30  # Menos similarity = grupos más específicos
+DEFAULT_DUPLICATE_SIMILARITY = 0.92
+DEFAULT_COSINE_THRESHOLD = 0.65
 
 SUPPORTED_TEXT_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".csv",
-    ".json",
-    ".log",
-    ".py",
-    ".docx",
-    ".pptx",
-    ".pdf",
+    ".txt", ".md", ".csv", ".json", ".log", ".py",
+    ".docx", ".pptx", ".pdf",
+    ".xlsx", ".xls",
+    ".odt", ".odp", ".ods",
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+# ── Categorías académicas predeterminadas ─────────────────────────────────
+# Se usan cuando categories.json está vacío (primera ejecución o después de reset).
+# Basadas en las materias reales del usuario.
+DEFAULT_ACADEMIC_CATEGORIES: list[dict] = [
+    {
+        "name": "Taller de Investigacion",
+        "keywords": [
+            "investigacion", "metodologia", "hipotesis", "marco", "teorico",
+            "bibliografia", "fuente", "cita", "referencia", "abstract",
+            "resumen", "objetivo", "planteamiento", "problema", "justificacion",
+            "tesis", "ensayo", "resultado", "conclusion", "encuesta",
+            "variable", "apa", "capitulo", "muestra", "instrumento", "raul", "monforte", "chulin"
+        ],
+        "files": []
+    },
+    {
+        "name": "Tecnologias de Virtualizacion",
+        "keywords": [
+            "virtualizacion", "maquina", "virtual", "vmware", "virtualbox",
+            "hypervisor", "contenedor", "docker", "imagen", "snapshot",
+            "vm", "host", "guest", "instancia", "servidor", "cluster", "dagoberto", "quintanilla", "alvarado",
+            "proxmox", "hyper", "particion", "iso", "ovf"
+        ],
+        "files": []
+    },
+    {
+        "name": "Tecnologias en la Nube",
+        "keywords": [
+            "nube", "cloud", "aws", "azure", "google", "gcp", "s3",
+            "bucket", "lambda", "serverless", "iaas", "paas", "saas",
+            "storage", "escalabilidad", "microservicio", "api", "rest",
+            "despliegue", "kubernetes", "balanceo", "region", "firebase", "omar", "eduardo", "betanzos", "martinez"
+        ],
+        "files": []
+    },
+    {
+        "name": "Hacking Etico",
+        "keywords": [
+            "hacking", "etico", "pentest", "penetracion", "vulnerabilidad",
+            "exploit", "nmap", "escaneo", "puerto", "reconocimiento",
+            "metasploit", "kali", "firewall", "intrusion", "cve",
+            "payload", "shell", "privilege", "footprinting", "enumeration",
+            "sniffing", "tcp", "udp", "ataque", "defensa", "parche", "jose", "eduardo", "rios", "mendoza"
+        ],
+        "files": []
+    },
+    {
+        "name": "Administracion de Redes",
+        "keywords": [
+            "red", "router", "switch", "protocolo", "ip", "mascara",
+            "subred", "vlan", "ospf", "bgp", "dns", "dhcp", "nat",
+            "gateway", "topologia", "ethernet", "wifi", "inalambrico",
+            "monitoreo", "snmp", "cisco", "tracer", "latencia", "banda", "aurora", "moreno", "rodriguez", "ubuntu", "zabbix", "prtg"
+        ],
+        "files": []
+    },
+    {
+        "name": "Inteligencia Artificial",
+        "keywords": [
+            "inteligencia", "artificial", "machine", "learning", "neuronal",
+            "algoritmo", "clasificacion", "regresion", "clustering",
+            "entrenamiento", "modelo", "prediccion", "embedding",
+            "transformer", "nlp", "procesamiento", "lenguaje", "natural",
+            "deep", "backpropagation", "dataset", "epoch", "perceptron",
+            "feature", "overfitting", "tensorflow", "pytorch", "nora", "hilda", "reyes", "ramirez", "filemaster", "tecnicas"
+        ],
+        "files": []
+    },
+    {
+        "name": "Programacion Logica y Funcional",
+        "keywords": [
+            "prolog", "haskell", "lisp", "erlang", "funcional", "logica",
+            "predicado", "clausula", "recursion", "lambda", "patron",
+            "matching", "inmutable", "backtracking", "lazy", "python", "sigvet",
+            "inferencia", "declarativo", "vibecoding", "currying", "composicion",
+            "arbol", "lista", "higher", "orden", "pureza", "alexis", "ivan", "roman", "chevez"
+        ],
+        "files": []
+    },
+]
 
 
 @dataclass
 class UserConfig:
     watch_folder: str = ""
     auto_rename: bool = True
+    auto_organize: bool = True
     detect_duplicates: bool = True
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
 
@@ -81,7 +167,12 @@ class UserConfig:
     def watch_path(self) -> Path | None:
         if not self.is_configured:
             return None
-        return Path(self.watch_folder).expanduser()
+        p = Path(self.watch_folder).expanduser()
+        return p if p.exists() else None
+
+
+def reset_user_config() -> None:
+    save_user_config(UserConfig())
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -127,12 +218,13 @@ def load_user_config() -> UserConfig:
         return UserConfig()
 
     threshold = float(payload.get("similarity_threshold", DEFAULT_SIMILARITY_THRESHOLD))
-    if threshold < 0.1 or threshold > 0.65:
+    if threshold < 0.30 or threshold > 1.0:
         threshold = DEFAULT_SIMILARITY_THRESHOLD
 
     return UserConfig(
         watch_folder=str(payload.get("watch_folder", "")),
         auto_rename=bool(payload.get("auto_rename", True)),
+        auto_organize=bool(payload.get("auto_organize", True)),
         detect_duplicates=bool(payload.get("detect_duplicates", True)),
         similarity_threshold=threshold,
     )
@@ -148,8 +240,11 @@ def load_categories() -> list[dict[str, object]]:
     try:
         payload = json.loads(CATEGORIES_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
-    return payload if isinstance(payload, list) else []
+        return list(DEFAULT_ACADEMIC_CATEGORIES)
+    # ✅ Si está vacío, usar categorías predeterminadas
+    if not payload or not isinstance(payload, list):
+        return list(DEFAULT_ACADEMIC_CATEGORIES)
+    return payload
 
 
 def save_categories(categories: list[dict[str, object]]) -> None:
@@ -169,3 +264,67 @@ def load_runtime_state() -> dict[str, object]:
 def save_runtime_state(state: dict[str, object]) -> None:
     ensure_data_files()
     _write_json(RUNTIME_STATE_PATH, state)
+
+
+def export_config(export_path: Path) -> bool:
+    """Exporta toda la configuración a un archivo JSON.
+    
+    Args:
+        export_path: Ruta destino del archivo de exportación.
+        
+    Returns:
+        True si la exportación fue exitosa.
+    """
+    try:
+        export_data = {
+            "version": "1.0",
+            "config": load_user_config(),
+            "categories": load_categories(),
+            "exported_at": str(Path().resolve()),
+        }
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(export_path, "w", encoding="utf-8") as f:
+            json.dump(export_data, f, indent=2, ensure_ascii=False)
+        logger.info("Configuración exportada a: %s", export_path)
+        return True
+    except Exception as exc:
+        logger.error("Error exportando configuración: %s", exc)
+        return False
+
+
+def import_config(import_path: Path, merge: bool = False) -> bool:
+    """Importa configuración desde un archivo JSON.
+    
+    Args:
+        import_path: Ruta del archivo de importación.
+        merge: Si True, fusiona categorías existentes. Si False, reemplaza.
+        
+    Returns:
+        True si la importación fue exitosa.
+    """
+    try:
+        with open(import_path, "r", encoding="utf-8") as f:
+            import_data = json.load(f)
+        
+        if "config" in import_data:
+            config_data = import_data["config"]
+            config = UserConfig(**config_data)
+            save_user_config(config)
+        
+        if "categories" in import_data:
+            new_categories = import_data["categories"]
+            if merge:
+                existing = load_categories()
+                existing_names = {c.get("name", "") for c in existing}
+                for cat in new_categories:
+                    if cat.get("name") not in existing_names:
+                        existing.append(cat)
+                save_categories(existing)
+            else:
+                save_categories(new_categories)
+        
+        logger.info("Configuración importada desde: %s", import_path)
+        return True
+    except Exception as exc:
+        logger.error("Error importando configuración: %s", exc)
+        return False
