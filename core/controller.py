@@ -7,6 +7,8 @@ import threading
 import time
 import uuid
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from datetime import datetime
@@ -17,6 +19,7 @@ from ai.classifier import DocumentClassifier
 from ai.clustering import DocumentClusterer
 from ai.embeddings import EmbeddingService, centroid
 from ai.keyword_extractor import KeywordExtractor
+from ai.neural_classifier import NeuralCategoryClassifier
 from ai.text_utils import title_from_keywords, generate_category_name
 from config.settings import (
     DEFAULT_DUPLICATES_FOLDER_NAME,
@@ -339,6 +342,12 @@ KNOWN_CATEGORY_HINTS = {
 
 logger = logging.getLogger(__name__)
 
+LEARNING_KEYWORDS_LIMIT = 60
+LEARNING_MIN_TOKEN_LEN = 4
+LEARNING_CONFIDENCE_THRESHOLD = 0.82
+NEURAL_MIN_COVER_CONFIDENCE = 0.82
+NEURAL_MIN_CONTENT_CONFIDENCE = 0.76
+
 
 class FileMasterController:
     def __init__(self, notify_callback=None) -> None:
@@ -349,6 +358,7 @@ class FileMasterController:
         self.text_extractor = TextExtractor()
         self.embedder = EmbeddingService()
         self.keyword_extractor = KeywordExtractor()
+        self.neural_classifier = NeuralCategoryClassifier()
         self.clusterer = DocumentClusterer()
         self.classifier = DocumentClassifier()
         self.duplicate_detector = DuplicateDetector()
@@ -358,6 +368,7 @@ class FileMasterController:
         self._pending_documents: list[DocumentRecord] = []
         self.state = self._build_initial_state()
         self.watcher = FileWatcher(self._handle_watcher_event)
+        self._sync_known_hints_with_categories()
         self._bootstrap()
 
     def _build_initial_state(self) -> dict[str, object]:
@@ -430,7 +441,11 @@ class FileMasterController:
 
     def analyze_initial(self) -> list[dict[str, object]]:
         watch_path = self._require_watch_folder()
-        documents = self._collect_documents(self._incoming_files(watch_path))
+        documents = self._collect_documents(
+            self._incoming_files(watch_path),
+            use_cover_text=True,
+            include_embeddings=True,
+        )
         if not documents:
             self._pending_documents = []
             self.state["pending_groups"] = []
@@ -507,6 +522,7 @@ class FileMasterController:
         categories_payload = list(seen_names.values())
         save_categories(categories_payload)
         self.state["categories"] = categories_payload
+        self._sync_known_hints_with_categories()
 
         # Asignar carpeta a cada documento por doc_id
         assignment_by_doc: dict[str, str] = {}
@@ -546,7 +562,11 @@ class FileMasterController:
                 self._notify()
                 return self._empty_summary()
         
-        incoming = self._collect_documents(self._incoming_files(watch_path))
+        incoming = self._collect_documents(
+            self._incoming_files(watch_path),
+            use_cover_text=True,
+            include_embeddings=False,
+        )
         if not incoming:
             self.state["status_message"] = "No hay archivos nuevos para organizar."
             self._notify()
@@ -616,7 +636,11 @@ class FileMasterController:
         if not path.exists():
             return
 
-        documents = self._collect_documents([path])
+        documents = self._collect_documents(
+            [path],
+            use_cover_text=True,
+            include_embeddings=False,
+        )
         if not documents:
             self.state["status_message"] = f"No fue posible procesar {path.name} para clasificarlo manualmente."
             self._notify()
@@ -639,6 +663,7 @@ class FileMasterController:
                 confidence=1.0,
             )
         )
+        self._learn_from_document(category_name, document, destination_path=destination)
         self.state["status_message"] = f"{path.name} fue movido manualmente a {category_name}."
         self.refresh_runtime_state()
         logger.info("Archivo clasificado manualmente | archivo=%s | categoria=%s", path, category_name)
@@ -697,14 +722,28 @@ class FileMasterController:
         self.state["config"] = asdict(self.config)
         self._persist_runtime()
 
-    def _collect_documents(self, file_paths: list[Path]) -> list[DocumentRecord]:
+    def _collect_documents(
+        self,
+        file_paths: list[Path],
+        *,
+        use_cover_text: bool = True,
+        include_embeddings: bool = False,
+    ) -> list[DocumentRecord]:
         documents = []
         for file_path in file_paths:
             if not file_path.exists() or not file_path.is_file():
                 continue
-            extraction = self.text_extractor.extract(file_path)
+            extraction = (
+                self.text_extractor.extract_cover(file_path)
+                if use_cover_text
+                else self.text_extractor.extract(file_path)
+            )
             keywords = self.keyword_extractor.extract(extraction.text or file_path.stem)
-            embedding = self.embedder.embed(extraction.text or " ".join(keywords) or file_path.stem)
+            embedding = (
+                self.embedder.embed(extraction.text or " ".join(keywords) or file_path.stem)
+                if include_embeddings
+                else []
+            )
             try:
                 digest = self.duplicate_detector.hash_file(file_path)
             except OSError:
@@ -741,7 +780,11 @@ class FileMasterController:
         explicit_assignments = explicit_assignments or {}
         watch_path = self._require_watch_folder()
         duplicates_folder = watch_path / DEFAULT_DUPLICATES_FOLDER_NAME
-        existing = self._collect_documents(self._managed_files(watch_path))
+        existing = self._collect_documents(
+            self._managed_files(watch_path),
+            use_cover_text=False,
+            include_embeddings=False,
+        )
 
         duplicate_groups, duplicate_ids = self.duplicate_detector.detect(
             documents,
@@ -749,6 +792,8 @@ class FileMasterController:
         )
 
         categories = self._build_category_profiles(existing, load_categories())
+        runtime_hints = self._build_runtime_hint_map(categories)
+        self._train_neural_classifier(categories, existing)
         cycle = CycleSummary(detected=len(documents))
         folder_counter: Counter[str] = Counter()
         confidence_values: list[float] = []
@@ -760,6 +805,8 @@ class FileMasterController:
 
         for document in documents:
             source = Path(document.path)
+            # Procesar con contenido completo para clasificar con mejor precisión.
+            self._ensure_full_text(document)
             if document.doc_id in duplicate_ids:
                 duplicate_path = self.organizer.move_to_duplicates(source, duplicates_folder)
                 self._update_duplicate_item_path(persisted_duplicate_groups, document.doc_id, duplicate_path, Path(document.path))
@@ -777,17 +824,21 @@ class FileMasterController:
 
             assigned = explicit_assignments.get(document.doc_id)
             confidence = 1.0 if assigned else 0.0
- 
+
             if not assigned:
-                # ── Paso 1: hints con análisis multi-categoría ──
+                assigned, confidence = self._classify_by_cover_subject(
+                    document.text or "",
+                    categories,
+                    document_name=document.name,
+                )
+
+            if not assigned:
                 multi_results = get_multi_categories(
                     document.text or "",
-                    KNOWN_CATEGORY_HINTS,
+                    runtime_hints,
                 )
                 if multi_results:
-                    # Usar la categoría principal
                     assigned, confidence = multi_results[0]
-                    # Log para debugging
                     if len(multi_results) > 1:
                         logger.info(
                             "Multi-categoría detectada: %s -> %s (alternativas: %s)",
@@ -795,18 +846,49 @@ class FileMasterController:
                             assigned,
                             [f"{c}({s:.2f})" for c, s in multi_results[1:]]
                         )
- 
+
             if not assigned:
-                # ── Paso 2: similitud por embedding con centroides ──
+                neural_cover_text = f"{document.name} {document.text or ''}".strip()
+                neural_label, neural_conf = self._predict_by_neural(neural_cover_text)
+                if neural_label and neural_conf >= NEURAL_MIN_COVER_CONFIDENCE:
+                    assigned, confidence = neural_label, neural_conf
+
+            if not assigned:
+                self._ensure_full_text(document)
+
+            if not assigned:
+                assigned, confidence = self._classify_by_cover_subject(
+                    document.text or "",
+                    categories,
+                    document_name=document.name,
+                )
+
+            if not assigned:
+                multi_results = get_multi_categories(
+                    document.text or "",
+                    runtime_hints,
+                )
+                if multi_results:
+                    assigned, confidence = multi_results[0]
+
+            if not assigned:
+                neural_label, neural_conf = self._predict_by_neural(document.text or "")
+                if neural_label and neural_conf >= NEURAL_MIN_CONTENT_CONFIDENCE:
+                    assigned, confidence = neural_label, neural_conf
+
+            if not assigned:
+                if not document.embedding:
+                    document.embedding = self.embedder.embed(
+                        document.text or " ".join(document.keywords) or source.stem
+                    )
                 label, confidence = self.classifier.classify(
                     document.embedding,
                     {category.name: category.centroid for category in categories if category.centroid},
                     similarity_threshold=self.config.similarity_threshold,
                 )
                 assigned = label
- 
+
             if not assigned:
-                # ── Paso 3: keywords por Jaccard (fallback ligero) ──
                 assigned, confidence = self._classify_by_keywords(document.keywords, categories)
 
             if not assigned:
@@ -848,6 +930,8 @@ class FileMasterController:
                     details=json.dumps({"keywords": document.keywords}, ensure_ascii=False),
                 )
             )
+            if (confidence or 0.0) >= LEARNING_CONFIDENCE_THRESHOLD:
+                self._learn_from_document(assigned, document, destination_path=destination)
 
         cycle.precision = round((sum(confidence_values) / len(confidence_values)) * 100, 1) if confidence_values else 0.0
         cycle.duration_seconds = round(time.perf_counter() - start, 2)
@@ -906,11 +990,221 @@ class FileMasterController:
             )
         return categories
 
+    def _sync_known_hints_with_categories(self) -> None:
+        for category in load_categories():
+            name = str(category.get("name", "")).strip()
+            if not name or name not in KNOWN_CATEGORY_HINTS:
+                continue
+            keywords = {
+                str(token).strip().lower()
+                for token in category.get("keywords", [])
+                if str(token).strip()
+            }
+            KNOWN_CATEGORY_HINTS[name].update(keywords)
+
+    def _build_runtime_hint_map(self, categories: list[CategoryProfile]) -> dict[str, set[str]]:
+        """Construye hints dinámicos para todas las categorías activas."""
+        runtime_hints: dict[str, set[str]] = {}
+
+        # Base: hints globales conocidos.
+        for name, hints in KNOWN_CATEGORY_HINTS.items():
+            runtime_hints[name] = set(hints)
+
+        for category in categories:
+            name = category.name.strip()
+            if not name:
+                continue
+            bucket = runtime_hints.setdefault(name, set())
+
+            # Incluir tokens del nombre de categoría.
+            normalized_name = self._normalize_for_match(name)
+            name_tokens = [token for token in normalized_name.split() if len(token) >= 3]
+            bucket.update(name_tokens)
+            if normalized_name:
+                bucket.add(normalized_name.replace(" ", ""))
+
+            # Incluir keywords aprendidas/configuradas.
+            for keyword in category.keywords:
+                normalized_kw = self._normalize_for_match(str(keyword))
+                if not normalized_kw:
+                    continue
+                bucket.add(normalized_kw)
+                bucket.add(normalized_kw.replace(" ", ""))
+
+        return runtime_hints
+
     def _keywords_for_documents(self, documents: list[DocumentRecord], limit: int = 5) -> list[str]:
         counter: Counter[str] = Counter()
         for document in documents:
             counter.update(document.keywords)
         return [token for token, _count in counter.most_common(limit)]
+
+    def _build_neural_training_samples(
+        self,
+        categories: list[CategoryProfile],
+        managed_documents: list[DocumentRecord],
+    ) -> list[tuple[str, str]]:
+        samples: list[tuple[str, str]] = []
+
+        for category in categories:
+            if category.keywords:
+                kw_text = " ".join(category.keywords)
+                samples.append((f"{category.name} {kw_text} {kw_text}", category.name))
+                samples.append((f"materia {category.name} proyecto final {kw_text}", category.name))
+                samples.append((f"portada {category.name} unidad reporte {kw_text}", category.name))
+            else:
+                samples.append((category.name, category.name))
+
+            hint_words = list(KNOWN_CATEGORY_HINTS.get(category.name, set()))
+            if hint_words:
+                hint_slice = " ".join(hint_words[:40])
+                samples.append((f"{category.name} {hint_slice}", category.name))
+
+        for document in managed_documents:
+            doc_path = Path(document.path)
+            label = doc_path.parent.name
+            if not label or label == DEFAULT_DUPLICATES_FOLDER_NAME:
+                continue
+            text = (document.text or "").strip()
+            if not text:
+                text = f"{doc_path.stem} {' '.join(document.keywords)}".strip()
+            if text:
+                samples.append((text[:3000], label))
+
+        history_records = self.history.recent_records(limit=800)
+        for record in history_records:
+            if record.get("action") not in {"organized", "manual_classified"}:
+                continue
+            label = str(record.get("category", "")).strip()
+            if not label:
+                continue
+            source_name = Path(str(record.get("source", ""))).stem
+            destination_name = Path(str(record.get("destination", ""))).stem
+            details = record.get("details", {})
+            detail_keywords = []
+            if isinstance(details, dict):
+                detail_keywords = [str(item) for item in details.get("keywords", [])]
+            text = f"{source_name} {destination_name} {' '.join(detail_keywords)}".strip()
+            if text:
+                samples.append((text[:2000], label))
+        return samples
+
+    def _train_neural_classifier(
+        self,
+        categories: list[CategoryProfile],
+        managed_documents: list[DocumentRecord],
+    ) -> None:
+        samples = self._build_neural_training_samples(categories, managed_documents)
+        trained = self.neural_classifier.fit(samples)
+        logger.info(
+            "Entrenamiento expert neural | muestras=%d | categorias=%d | activo=%s",
+            len(samples),
+            len(categories),
+            trained,
+        )
+
+    def _predict_by_neural(self, text: str) -> tuple[str | None, float]:
+        prediction = self.neural_classifier.predict(text)
+        return prediction.label, prediction.confidence
+
+    def _ensure_full_text(self, document: DocumentRecord) -> None:
+        if document.text and not document.extraction_method.endswith("_cover"):
+            return
+        source = Path(document.path)
+        extraction = self.text_extractor.extract(source)
+        if extraction.text:
+            document.text = extraction.text
+        document.extraction_method = extraction.method
+        document.extraction_note = extraction.note
+        document.keywords = self.keyword_extractor.extract(document.text or source.stem)
+
+    def _learn_from_document(
+        self,
+        category_name: str,
+        document: DocumentRecord,
+        *,
+        destination_path: Path | None = None,
+    ) -> None:
+        if not category_name:
+            return
+
+        learned_tokens = list(document.keywords)
+        learned_tokens.extend(self._tokens_from_text(document.name))
+        if document.text:
+            learned_tokens.extend(self._tokens_from_text(document.text[:1500]))
+        self._upsert_category_learning(
+            category_name,
+            learned_tokens,
+            destination_path=destination_path,
+        )
+
+    def _upsert_category_learning(
+        self,
+        category_name: str,
+        tokens: list[str],
+        *,
+        destination_path: Path | None = None,
+    ) -> None:
+        clean_name = category_name.strip()
+        if not clean_name:
+            return
+
+        cleaned_tokens = []
+        seen = set()
+        for token in tokens:
+            normalized = token.strip().lower()
+            if len(normalized) < LEARNING_MIN_TOKEN_LEN:
+                continue
+            if not normalized.isalpha():
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            cleaned_tokens.append(normalized)
+
+        categories = load_categories()
+        category_entry = next((item for item in categories if item.get("name") == clean_name), None)
+        if category_entry is None:
+            category_entry = {"name": clean_name, "keywords": [], "files": []}
+            categories.append(category_entry)
+
+        existing_keywords = [str(k).strip().lower() for k in category_entry.get("keywords", []) if str(k).strip()]
+        merged_keywords = []
+        existing_seen = set()
+        for token in [*existing_keywords, *cleaned_tokens]:
+            if token in existing_seen:
+                continue
+            existing_seen.add(token)
+            merged_keywords.append(token)
+        category_entry["keywords"] = merged_keywords[:LEARNING_KEYWORDS_LIMIT]
+
+        if destination_path is not None:
+            existing_files = [str(p) for p in category_entry.get("files", []) if str(p).strip()]
+            destination_str = str(destination_path)
+            if destination_str not in existing_files:
+                existing_files.append(destination_str)
+            category_entry["files"] = existing_files[-LEARNING_KEYWORDS_LIMIT:]
+
+        save_categories(categories)
+        self.state["categories"] = categories
+
+        if clean_name in KNOWN_CATEGORY_HINTS:
+            KNOWN_CATEGORY_HINTS[clean_name].update(category_entry["keywords"])
+
+    def _tokens_from_text(self, text: str, *, limit: int = 20) -> list[str]:
+        if not text:
+            return []
+        tokens = re.findall(r"[a-zA-ZáéíóúÁÉÍÓÚñÑ]{4,}", text.lower())
+        unique_tokens = []
+        seen = set()
+        for token in tokens:
+            if token in seen:
+                continue
+            seen.add(token)
+            unique_tokens.append(token)
+            if len(unique_tokens) >= limit:
+                break
+        return unique_tokens
 
     def _suggest_category_name(self, keywords: list[str], text: str = "") -> str:
             # Paso 1: buscar hints en el texto si está disponible
@@ -949,6 +1243,146 @@ class FileMasterController:
             logger.warning("Sin keywords para clasificar, usando fallback")
             return "Archivos Varios"
             return title_from_keywords(keywords, fallback="Grupo Academico")
+
+    def _classify_by_cover_subject(
+        self,
+        text: str,
+        categories: list[CategoryProfile],
+        document_name: str = "",
+    ) -> tuple[str | None, float]:
+        if not text or not categories:
+            if not document_name:
+                return None, 0.0
+
+        searchable = f"{document_name} {text[:3500]}".strip()
+        cover_text = self._normalize_for_match(searchable)
+        if not cover_text:
+            return None, 0.0
+
+        # Regla fuerte: extraer candidatos de materia (con o sin prefijo) y mapearlos.
+        for candidate in self._extract_subject_candidates(text, document_name=document_name):
+            explicit_match, explicit_score = self._best_category_match(candidate, categories)
+            if explicit_match and explicit_score >= 0.78:
+                return explicit_match, min(0.995, 0.94 + (explicit_score - 0.78) * 0.20)
+
+        best_name = None
+        best_hits = 0
+        best_ratio = 0.0
+        best_token_count = 0
+        for category in categories:
+            category_normalized = self._normalize_for_match(category.name)
+            tokens = [token for token in re.split(r"[^a-z0-9]+", category_normalized) if len(token) >= 3]
+            if not tokens:
+                continue
+            # Match exacto de la frase completa de la materia en nombre/portada.
+            if category_normalized and category_normalized in cover_text:
+                return category.name, 0.995
+            hits = sum(1 for token in tokens if token in cover_text)
+            ratio = hits / max(len(tokens), 1)
+            if hits > best_hits:
+                best_hits = hits
+                best_name = category.name
+                best_token_count = len(tokens)
+                best_ratio = ratio
+            elif hits == best_hits and ratio > best_ratio:
+                best_name = category.name
+                best_token_count = len(tokens)
+                best_ratio = ratio
+
+        if best_name is None:
+            return None, 0.0
+        required_hits = 2 if best_token_count >= 3 else 1
+        if best_hits >= required_hits and best_ratio >= 0.5:
+            confidence = min(0.97, 0.72 + best_hits * 0.10 + best_ratio * 0.08)
+            return best_name, confidence
+
+        # Fuzzy fallback sobre portada/nombre cuando la coincidencia no es literal.
+        fuzzy_match, fuzzy_score = self._best_category_match(cover_text, categories)
+        if fuzzy_match and fuzzy_score >= 0.84:
+            return fuzzy_match, min(0.985, 0.86 + (fuzzy_score - 0.84) * 0.30)
+        return None, 0.0
+
+    def _extract_subject_candidates(self, text: str, *, document_name: str = "") -> list[str]:
+        candidates: list[str] = []
+        source = (text or "")[:5000]
+
+        # 1) Patrones explícitos tipo "Materia: X"
+        patterns = (
+            r"(?im)\b(?:materia|asignatura|curso|unidad de aprendizaje)\b\s*[:\-]\s*([^\n\r]{3,120})",
+            r"(?im)\b(?:materia|asignatura|curso)\b\s+([^\n\r]{3,120})",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, source)
+            if match:
+                candidate = self._normalize_for_match(match.group(1))
+                if len(candidate) >= 4:
+                    candidates.append(candidate)
+
+        # 2) Primeras líneas de portada como posibles títulos de materia (sin prefijo)
+        raw_lines = [line.strip() for line in source.splitlines()[:20] if line.strip()]
+        blocked_words = {
+            "tecnologico", "instituto", "universidad", "campus", "semestre",
+            "grupo", "docente", "profesor", "alumno", "nombre", "matricula",
+            "portada", "proyecto", "reporte", "practica", "equipo", "fecha",
+        }
+        for line in raw_lines:
+            normalized = self._normalize_for_match(line)
+            if len(normalized) < 6:
+                continue
+            tokens = normalized.split()
+            if len(tokens) > 8:
+                continue
+            if sum(1 for token in tokens if token in blocked_words) >= max(1, len(tokens) // 2):
+                continue
+            candidates.append(normalized)
+
+        # 3) Nombre de archivo también es candidato
+        if document_name:
+            filename_candidate = self._normalize_for_match(Path(document_name).stem)
+            if len(filename_candidate) >= 4:
+                candidates.append(filename_candidate)
+
+        # Deduplicar preservando orden
+        unique: list[str] = []
+        seen = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            unique.append(candidate)
+        return unique
+
+    def _best_category_match(
+        self,
+        normalized_text: str,
+        categories: list[CategoryProfile],
+    ) -> tuple[str | None, float]:
+        if not normalized_text:
+            return None, 0.0
+        best_name: str | None = None
+        best_score = 0.0
+        for category in categories:
+            category_name = self._normalize_for_match(category.name)
+            if not category_name:
+                continue
+            score = SequenceMatcher(None, normalized_text, category_name).ratio()
+            # Si el nombre de categoría está contenido, subir score.
+            if category_name in normalized_text:
+                score = max(score, 0.99)
+            if score > best_score:
+                best_score = score
+                best_name = category.name
+        return best_name, best_score
+
+    def _normalize_for_match(self, text: str) -> str:
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFKD", text)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = normalized.lower()
+        normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
 
     def _classify_by_keywords(
         self,
@@ -995,7 +1429,11 @@ class FileMasterController:
         if not self.has_configuration():
             return []
         watch_path = self._require_watch_folder()
-        documents = self._collect_documents(self._incoming_files(watch_path))
+        documents = self._collect_documents(
+            self._incoming_files(watch_path),
+            use_cover_text=True,
+            include_embeddings=False,
+        )
         return [
             {
                 "path": document.path,
