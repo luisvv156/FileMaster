@@ -3,7 +3,8 @@
 Arquitectura:
 - Feature union: TF-IDF de palabras + TF-IDF de caracteres.
 - Ensemble ponderado: Logistic Regression + Linear SVM calibrado + MLP.
-- Entrenamiento con rebalanceo y aumentacion ligera por categoria.
+- Pre-entrenamiento con datos sintéticos de 17 categorías académicas.
+- Entrenamiento continuo desde el historial del usuario.
 """
 
 from __future__ import annotations
@@ -13,6 +14,9 @@ import random
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Final
+
+from ai.training_data import CATEGORIES, generate_all_samples
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,8 @@ _MIN_CLASSES = 2
 _MIN_SAMPLES_TOTAL = 12
 _MIN_SAMPLES_PER_CLASS = 3
 _MAX_TEXT_CHARS = 4500
+
+_PRE_TRAINED_SAMPLES_PER_CATEGORY: Final[int] = 50
 
 
 @dataclass
@@ -47,7 +53,35 @@ class NeuralCategoryClassifier:
     def ready(self) -> bool:
         return self._ready
 
+    def pre_train(self) -> bool:
+        """Pre-entrena el clasificador con datos sintéticos de las 17 categorías."""
+        try:
+            synthetic_samples = generate_all_samples(_PRE_TRAINED_SAMPLES_PER_CATEGORY)
+            logger.info(
+                "Pre-entrenando con %d muestras sintéticas de %d categorías",
+                len(synthetic_samples),
+                len(CATEGORIES)
+            )
+            return self._internal_fit(synthetic_samples)
+        except Exception as exc:
+            logger.warning("Pre-entrenamiento falló: %s", exc)
+            return False
+
     def fit(self, samples: list[tuple[str, str]]) -> bool:
+        """Entrena el clasificador con las muestras proporcionadas."""
+        return self._internal_fit(samples)
+
+    def train_with_fine_tuning(self, new_samples: list[tuple[str, str]]) -> bool:
+        """Combina datos pre-entrenados con nuevas muestras para fine-tuning."""
+        try:
+            synthetic_samples = generate_all_samples(_PRE_TRAINED_SAMPLES_PER_CATEGORY)
+            combined = synthetic_samples + new_samples
+            return self._internal_fit(combined)
+        except Exception as exc:
+            logger.warning("Fine-tuning falló: %s", exc)
+            return self._internal_fit(new_samples) if new_samples else False
+
+    def _internal_fit(self, samples: list[tuple[str, str]]) -> bool:
         texts, labels = self._normalize_samples(samples)
         if len(texts) < _MIN_SAMPLES_TOTAL:
             self._ready = False

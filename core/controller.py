@@ -359,6 +359,7 @@ class FileMasterController:
         self.embedder = EmbeddingService()
         self.keyword_extractor = KeywordExtractor()
         self.neural_classifier = NeuralCategoryClassifier()
+        self.neural_classifier.pre_train()
         self.clusterer = DocumentClusterer()
         self.classifier = DocumentClassifier()
         self.duplicate_detector = DuplicateDetector()
@@ -1043,7 +1044,7 @@ class FileMasterController:
         self,
         categories: list[CategoryProfile],
         managed_documents: list[DocumentRecord],
-    ) -> list[tuple[str, str]]:
+) -> list[tuple[str, str]]:
         samples: list[tuple[str, str]] = []
 
         for category in categories:
@@ -1095,7 +1096,21 @@ class FileMasterController:
         managed_documents: list[DocumentRecord],
     ) -> None:
         samples = self._build_neural_training_samples(categories, managed_documents)
-        trained = self.neural_classifier.fit(samples)
+        
+        if not self.neural_classifier.ready:
+            logger.info("Clasificador neuronal no inicializado, ejecutando pre-entrenamiento...")
+            pre_trained = self.neural_classifier.pre_train()
+            if pre_trained and samples:
+                logger.info("Aplicando fine-tuning con %d muestras del usuario", len(samples))
+                self.neural_classifier.train_with_fine_tuning(samples)
+        else:
+            if samples:
+                logger.info("Re-entrenando con fine-tuning usando %d muestras", len(samples))
+                self.neural_classifier.train_with_fine_tuning(samples)
+            else:
+                logger.debug("No hay muestras nuevas, manteniendo clasificador existente")
+
+        trained = self.neural_classifier.ready
         logger.info(
             "Entrenamiento expert neural | muestras=%d | categorias=%d | activo=%s",
             len(samples),
