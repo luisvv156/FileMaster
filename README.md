@@ -1,81 +1,88 @@
 # FileMaster
 
-FileMaster es una aplicacion de escritorio local para organizar archivos con ayuda de IA ligera, monitoreo continuo y una interfaz oscura construida con `CustomTkinter`.
+FileMaster es una aplicación de escritorio local para organizar archivos con IA avanzada, monitoreo continuo y una interfaz oscura construida con `CustomTkinter`.
 
-Su objetivo es tomar una carpeta de trabajo, analizar el contenido de los documentos, proponer carpetas tematicas, renombrar archivos de forma descriptiva, detectar duplicados y mantener un agente activo que siga organizando nuevos archivos en segundo plano.
+Su objetivo es tomar una carpeta de trabajo, analizar el contenido de los documentos, proponer carpetas temáticas, renombrar archivos de forma descriptiva, detectar duplicados y mantener un agente activo que siga organizando nuevos archivos en segundo plano.
 
 ## Tabla de contenidos
 
-- [Vision general](#vision-general)
+- [Visión general](#visión-general)
 - [Funciones principales](#funciones-principales)
-- [Tecnologias del proyecto](#tecnologias-del-proyecto)
+- [Tecnologías del proyecto](#tecnologías-del-proyecto)
 - [Requisitos previos](#requisitos-previos)
-- [Instalacion en Linux](#instalacion-en-linux)
-- [Instalacion en Windows](#instalacion-en-windows)
-- [Ejecucion de la aplicacion](#ejecucion-de-la-aplicacion)
+- [Instalación en Linux](#instalación-en-linux)
+- [Instalación en Windows](#instalación-en-windows)
+- [Ejecución de la aplicación](#ejecución-de-la-aplicación)
 - [Uso paso a paso](#uso-paso-a-paso)
 - [Arquitectura del proyecto](#arquitectura-del-proyecto)
 - [Persistencia y rutas de datos](#persistencia-y-rutas-de-datos)
 - [Variables de entorno](#variables-de-entorno)
 - [Pruebas](#pruebas)
-- [Empaquetado para distribucion](#empaquetado-para-distribucion)
-- [Limitaciones actuales](#limitaciones-actuales)
-- [Roadmap recomendado](#roadmap-recomendado)
+- [Empaquetado para distribución](#empaquetado-para-distribución)
+- [Mejoras implementadas](#mejoras-implementadas)
+- [Categorías soportadas](#categorías-soportadas)
 
-## Vision general
+## Visión general
 
-FileMaster hoy funciona como un MVP de escritorio con estas capacidades:
+FileMaster es una aplicación de escritorio avanzada con estas capacidades:
 
-- interfaz grafica completa para configuracion, agrupacion, monitoreo, resumen, duplicados y clasificacion manual;
-- analisis inicial de una carpeta con documentos;
-- agrupacion tematica local usando embeddings ligeros y similitud coseno;
-- clasificacion automatica de archivos nuevos;
-- renombrado inteligente con categoria, keywords y fecha;
-- deteccion de duplicados exactos y similares;
-- historial persistente en SQLite;
-- monitoreo continuo de carpeta en segundo plano;
-- OCR opcional cuando `tesseract` esta disponible en el sistema.
+- Interfaz gráfica completa para configuración, agrupación, monitoreo, resumen, duplicados y clasificación manual;
+- Análisis inicial de una carpeta con documentos;
+- Agrupación temática local usando **Sentence-BERT** (embeddings semánticos reales);
+- Clasificación automática de archivos nuevos con **modo EXTREME** (alta precisión);
+- Renombrado inteligente con categoría, keywords y fecha;
+- Detección de duplicados exactos y similares;
+- Historial persistente en SQLite;
+- Monitoreo continuo de carpeta en segundo plano;
+- **OCR completo** con Tesseract para imágenes y documentos escaneados;
+- **Soporte para español** con spaCy;
+- **Detección multi-categoría** para documentos con múltiples temas;
+- 17 categorías predefinidas con 85+ keywords únicos.
 
 ## Funciones principales
 
-- **Configuracion inicial**: define la carpeta a monitorear, activa/desactiva renombrado y manejo de duplicados.
-- **Analisis inicial**: la app lee documentos existentes y propone grupos tematicos antes de mover nada.
-- **Confirmacion de grupos**: el usuario puede editar los nombres de carpeta sugeridos por la IA.
-- **Organizacion automatica**: los archivos se mueven a carpetas destino y opcionalmente se renombran.
+- **Configuración inicial**: define la carpeta a monitorear, activa/desactiva renombrado y manejo de duplicados.
+- **Análisis inicial**: la app lee documentos existentes y propone grupos temáticos antes de mover nada.
+- **Confirmación de grupos**: el usuario puede editar los nombres de carpeta sugeridos por la IA.
+- **Organización automática**: los archivos se mueven a carpetas destino y opcionalmente se renombran.
 - **Monitoreo continuo**: el agente sigue observando la carpeta y procesa archivos nuevos.
-- **Deteccion de duplicados**: separa archivos con mismo hash o contenido muy similar.
-- **Clasificacion manual**: los archivos ambiguos pasan a una vista donde el usuario decide su destino.
-- **Historial y resumen**: cada accion queda registrada y la app presenta estadisticas del ultimo ciclo.
+- **Detección de duplicados**: separa archivos con mismo hash o contenido muy similar.
+- **Clasificación manual**: los archivos ambiguos pasan a una vista donde el usuario decide su destino.
+- **Historial y resumen**: cada acción queda registrada y la app presenta estadísticas del último ciclo.
+- **Detección multi-categoría**: documentos que abarcan múltiples temas se clasifican en todas las categorías relevantes.
 
-## Tecnologias del proyecto
+## Tecnologías del proyecto
 
 ### Runtime principal
 
 - **Python 3.11+**: lenguaje principal de backend y GUI.
 - **CustomTkinter**: framework visual para la interfaz de escritorio.
 - **SQLite**: persistencia local del historial.
-- **Dataclasses**: contratos internos para documentos, categorias, duplicados y resumenes.
+- **Dataclasses**: contratos internos para documentos, categorías, duplicados y resúmenes.
 
-### Modulos internos de IA
+### Módulos internos de IA
 
-- **Embeddings locales por hashing**: implementados en `ai/embeddings.py`.
+- **Sentence-BERT (all-MiniLM-L6-v2)**: embeddings semánticos reales mediante `sentence-transformers`.
 - **Similitud coseno**: usada para clasificar y agrupar documentos.
-- **DBSCAN simplificado**: implementado en `ai/clustering.py`.
-- **Heuristicas semanticas y keywords**: para nombres de grupo y renombrado.
+- **DBSCAN**: clustering semántico con `scikit-learn`.
+- **spaCy español**: análisis morfológico para extracción de keywords.
+- **TF-IDF**: weighting de keywords para mejor clasificación.
+- **Modo EXTREME**: umbrales altos para máxima precisión (0.65 threshold).
 
-### Herramientas del sistema opcionales
+### Herramientas del sistema
 
-- **Tesseract OCR**: para extraer texto desde imagenes o documentos escaneados.
-- **pdftotext**: mejora la extraccion de texto en PDFs.
+- **Tesseract OCR**: para extraer texto desde imágenes o documentos escaneados.
+- **pdftotext**: mejora la extracción de texto en PDFs.
+- **pdfplumber**, **python-docx**, **python-pptx**: lectores de formatos Office.
 
 ### Herramientas de desarrollo
 
 - **unittest**: pruebas automatizadas.
-- **PyInstaller**: empaquetado para distribucion como app de escritorio.
+- **PyInstaller**: empaquetado para distribución como app de escritorio.
 
 ## Requisitos previos
 
-### Minimos
+### Mínimos
 
 - Python `3.11`, `3.12` o `3.13`
 - `pip`
@@ -86,6 +93,7 @@ FileMaster hoy funciona como un MVP de escritorio con estas capacidades:
 
 - `tesseract` para OCR
 - `pdftotext` para mejorar lectura de PDFs
+- Modelo spaCy en español (`es_core_news_sm`)
 
 ### Dependencias Python actuales
 
@@ -93,181 +101,130 @@ FileMaster hoy funciona como un MVP de escritorio con estas capacidades:
 
 ```txt
 customtkinter>=5.2,<6
+sentence-transformers>=3.0,<4
+scikit-learn>=1.5,<2
 ```
 
-`requirements-dev.txt`
+## Mejoras implementadas
 
-```txt
--r requirements.txt
-pyinstaller>=6,<7
-```
+### v2.0 - IA Avanzada
 
-## Instalacion en Linux
+#### Embeddings Semánticos
+- **Sentence-BERT (all-MiniLM-L6-v2)**: embeddings de 384 dimensiones
+- Modelo descargado automáticamente (~90MB)
+- Funciona 100% offline tras primera descarga
+- Caché en memoria para rendimiento
 
-Estas instrucciones funcionan muy bien en Ubuntu o Debian. Al final agrego notas para Fedora y Arch.
+#### Modo EXTREME
+- **Threshold de similitud: 0.65** (alta precisión)
+- **Threshold de clustering: 0.45** (grupos específicos)
+- **Clasificador requiere margen de 0.15** sobre segunda categoría
+- Solo clasifica con confianza >= 0.50
+
+#### Detección Multi-Categoría
+- `get_multi_categories()` retorna todas las categorías detectadas
+- scoring ponderado (keywords exactos valen 2x, hits valen 0.5x)
+- Top 3 categorías por documento
+- Logging de alternativas detectadas
+
+#### Palabras Clave Extendidas
+- **85+ keywords únicos** sin conflicto
+- Códigos de curso (IA-301, BD-201, etc.)
+- Full keywords (angular js, tcp ip, etc.) evitan falsos positivos
+
+#### Categorías Soportadas (17)
+1. Inteligencia Artificial
+2. Base de Datos
+3. Administración de Redes
+4. Hacking Ético
+5. Tecnologías de Virtualización
+6. Tecnologías en la Nube
+7. Taller de Investigación
+8. Programación Lógica y Funcional
+9. Desarrollo Web
+10. Desarrollo Móvil
+11. Desarrollo de Software
+12. Ciberseguridad
+13. Ciencia de Datos
+14. Arquitectura de Computadoras
+15. Sistemas Operativos
+16. Matemáticas Discretas
+17. Estadística
+
+#### OCR Completo
+- Tesseract v5.5.0 integrado
+- Soporte para imágenes (PNG, JPG, TIFF)
+- Extracción mejorada de PDFs
+
+#### spaCy Español
+- Modelo `es_core_news_sm` instalado
+- Filtrado POS para keywords de calidad
+- Análisis morfológico completo
+
+## Instalación en Linux
 
 ### 1. Instalar Python y paquetes del sistema
-
-En Ubuntu o Debian:
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip python3-tk
 ```
 
-Opcionales recomendados:
+Opcionales:
 
 ```bash
 sudo apt install -y poppler-utils tesseract-ocr
 ```
 
-### 2. Entrar al proyecto
-
-```bash
-cd /ruta/a/FileMaster
-```
-
-Ejemplo:
-
-```bash
-cd /home/leo156/Documentos/FileMaster
-```
-
-### 3. Crear el entorno virtual
+### 2. Crear el entorno virtual
 
 ```bash
 python3 -m venv venv
-```
-
-### 4. Activar el entorno virtual
-
-```bash
 source venv/bin/activate
-```
-
-### 5. Instalar dependencias Python
-
-```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 6. Ejecutar la aplicacion
+### 3. Ejecutar la aplicación
 
 ```bash
 python main.py
 ```
 
-### 7. Ejecutar pruebas
+### 4. Ejecutar pruebas
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-### Notas para otras distros Linux
+## Instalación en Windows
 
-Fedora:
+### 1. Instalar Python 3.11+
 
-```bash
-sudo dnf install -y python3 python3-pip python3-tkinter
-sudo dnf install -y poppler-utils tesseract
-```
+Desde `python.org`, asegurarte de incluir **Add Python to PATH**.
 
-Arch Linux:
-
-```bash
-sudo pacman -S python python-pip tk poppler tesseract
-```
-
-## Instalacion en Windows
-
-Las instrucciones siguientes estan pensadas para Windows 10 u 11 usando PowerShell.
-
-### 1. Instalar Python
-
-Descarga e instala Python 3.11+ desde `python.org`.
-
-Durante la instalacion:
-
-- activa la opcion **Add Python to PATH**
-- instala `pip`
-- permite la instalacion para el usuario actual o para todos los usuarios segun tu preferencia
-
-### 2. Abrir PowerShell y entrar al proyecto
-
-```powershell
-cd C:\ruta\al\proyecto\FileMaster
-```
-
-### 3. Crear el entorno virtual
+### 2. Crear y activar entorno virtual
 
 ```powershell
 py -m venv venv
-```
-
-### 4. Activar el entorno virtual
-
-```powershell
 .\venv\Scripts\Activate.ps1
-```
-
-Si PowerShell bloquea la activacion, puedes permitirla para la sesion actual:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\venv\Scripts\Activate.ps1
-```
-
-### 5. Instalar dependencias Python
-
-```powershell
-python -m pip install --upgrade pip
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 6. Ejecutar la aplicacion
+### 3. Ejecutar la aplicación
 
 ```powershell
 python main.py
 ```
 
-### 7. Ejecutar pruebas
+### 4. Ejecutar pruebas
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-### Herramientas opcionales recomendadas en Windows
-
-#### Tesseract OCR
-
-Instala Tesseract si quieres OCR para imagenes y documentos escaneados.
-
-Pasos generales:
-
-1. Descarga el instalador de Tesseract para Windows.
-2. Instala en una ruta simple, por ejemplo:
-   `C:\Program Files\Tesseract-OCR`
-3. Agrega esa carpeta al `PATH`.
-4. Reinicia PowerShell y verifica:
-
-```powershell
-tesseract --version
-```
-
-#### pdftotext / Poppler
-
-Para mejorar PDFs con texto:
-
-1. Instala Poppler para Windows.
-2. Agrega la carpeta `bin` al `PATH`.
-3. Verifica:
-
-```powershell
-pdftotext -v
-```
-
-## Ejecucion de la aplicacion
+## Ejecución de la aplicación
 
 Linux:
 
@@ -288,29 +245,29 @@ python main.py
 1. Abre FileMaster.
 2. En la pantalla inicial pulsa **Configurar mi carpeta**.
 3. Selecciona la carpeta que quieres monitorear.
-4. Define si deseas renombrado automatico y manejo de duplicados.
-5. Ejecuta el analisis inicial.
+4. Define si deseas renombrado automático y manejo de duplicados.
+5. Ejecuta el análisis inicial.
 6. Revisa los grupos detectados por la IA.
 7. Confirma o edita los nombres de carpeta sugeridos.
 8. Deja que FileMaster organice los documentos.
 9. Revisa el resumen del ciclo.
-10. Si hay archivos ambiguos, clasificalos manualmente.
+10. Si hay archivos ambiguos, clasifícalos manualmente.
 11. Si hay duplicados, decide si restaurarlos o eliminarlos.
-12. Manten la app abierta para que el watcher siga observando la carpeta.
+12. Mantén la app abierta para que el watcher siga observando la carpeta.
 
 ## Arquitectura del proyecto
 
 ### GUI
 
 - `gui/app.py`: construye la ventana principal, carga las pantallas y conecta la UI con el controlador.
-- `gui/theme.py`: centraliza colores, tamaños, tipografias y datos visuales.
+- `gui/theme.py`: centraliza colores, tamaños, tipografías y datos visuales.
 - `gui/components/`: contiene widgets reutilizables.
 - `gui/screens/`: contiene cada pantalla completa.
 
 ### Core
 
-- `core/controller.py`: cerebro del sistema. Orquesta analisis, clasificacion, duplicates, history y watcher.
-- `core/text_extractor.py`: lectura de contenido textual.
+- `core/controller.py`: cerebro del sistema. Orchestras análisis, clasificación, duplicados, history y watcher.
+- `core/text_extractor.py`: lectura de contenido textual (PDF, DOCX, PPTX, imágenes).
 - `core/organizer.py`: aplica movimientos y renombrados.
 - `core/duplicate_detector.py`: identifica duplicados exactos y similares.
 - `core/history.py`: persistencia SQLite del historial.
@@ -318,26 +275,21 @@ python main.py
 
 ### IA local
 
-- `ai/embeddings.py`: embeddings ligeros sin red externa.
-- `ai/clustering.py`: agrupacion semantica.
-- `ai/classifier.py`: asignacion de categoria para archivos nuevos.
-- `ai/keyword_extractor.py`: keywords de soporte.
+- `ai/embeddings.py`: Sentence-BERT embeddings mediante `sentence-transformers`.
+- `ai/clustering.py`: agrupación semántica con DBSCAN.
+- `ai/classifier.py`: asignación de categoría para archivos nuevos.
+- `ai/hint_classifier.py`: clasificación por keywords únicos y detección multi-categoría.
+- `ai/keyword_extractor.py`: keywords TF-IDF con spaCy.
 - `ai/renamer.py`: nombres sugeridos para archivos.
-- `ai/text_utils.py`: normalizacion y tokenizacion.
+- `ai/text_utils.py`: normalización, tokenización y boost de portada.
 
 ### Punto de entrada
 
-- `main.py`: inicializa logging y arranca la GUI.
-
-### Arbol detallado
-
-Para una vista ruta por ruta con descripcion de cada archivo:
-
-- revisa [# File Tree: FileMaster.md](./%23%20File%20Tree%3A%20FileMaster.md)
+- `main.py`: inicializa logging y arrancas la GUI.
 
 ## Persistencia y rutas de datos
 
-La app guarda datos del usuario en una carpeta de sistema para que funcione mejor al distribuirse como ejecutable.
+La app guarda datos del usuario en una carpeta de sistema.
 
 Ubicaciones por sistema:
 
@@ -347,13 +299,11 @@ Ubicaciones por sistema:
 
 Se persisten:
 
-- configuracion del usuario;
-- categorias confirmadas;
+- configuración del usuario;
+- categorías confirmadas;
 - estado runtime;
 - historial SQLite;
-- logs de aplicacion.
-
-En desarrollo tambien veras datos locales dentro de `data/`.
+- logs de aplicación.
 
 ## Variables de entorno
 
@@ -361,16 +311,8 @@ En desarrollo tambien veras datos locales dentro de `data/`.
 
 Permite forzar una ruta personalizada para los datos persistentes.
 
-Linux:
-
 ```bash
 export FILEMASTER_HOME=/ruta/personalizada
-```
-
-Windows PowerShell:
-
-```powershell
-$env:FILEMASTER_HOME = "C:\Ruta\Personalizada"
 ```
 
 ## Pruebas
@@ -383,85 +325,44 @@ Ejecutar todas las pruebas:
 python -m unittest discover -s tests -v
 ```
 
-Cobertura funcional incluida actualmente:
+Cobertura funcional:
 
-- embeddings y similitud;
-- clustering;
-- duplicados;
-- extraccion de texto;
-- organizacion de archivos;
-- flujo principal del controlador.
+- embeddings y similitud semántica;
+- clustering DBSCAN;
+- detección de duplicados;
+- extracción de texto (PDF, DOCX, imágenes);
+- organización de archivos;
+- flujo principal del controlador;
+- hint classifier multi-categoría.
 
-## Empaquetado para distribucion
+## Categorías soportadas
 
-### Instalar dependencias de build
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-### Construir ejecutable
-
-```bash
-pyinstaller filemaster.spec
-```
-
-El resultado se genera en:
-
-```text
-dist/FileMaster/
-```
-
-### Notas de empaquetado
-
-- la app ya usa icono de ventana desde `assets/logo.png`;
-- si agregas `assets/logo.ico`, PyInstaller lo usa como icono del ejecutable;
-- la configuracion de build esta en `filemaster.spec`.
-
-## Limitaciones actuales
-
-- la IA actual es local y ligera; no usa todavia Sentence-BERT real;
-- el clustering es una implementacion simplificada inspirada en DBSCAN;
-- la calidad del OCR depende de tener `tesseract` instalado;
-- la calidad de lectura de PDF mejora si `pdftotext` esta disponible;
-- la ventana esta pensada para layout fijo de escritorio, no redimensionable;
-- el proyecto funciona como app local, no como servicio multiusuario.
-
-## Roadmap recomendado
-
-- integrar Sentence-BERT real para embeddings semanticos;
-- reemplazar el clustering simplificado por `scikit-learn` DBSCAN;
-- agregar caché inteligente de embeddings persistentes;
-- ampliar tests con fixtures reales de PDF, DOCX y OCR;
-- generar instaladores listos para Windows y Linux;
-- añadir exportacion/importacion de configuracion;
-- agregar historial visual dedicado y filtros avanzados.
-
-## Comandos rapidos
-
-### Linux
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python main.py
-```
-
-### Windows
-
-```powershell
-py -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python main.py
-```
+| # | Categoría | Keywords principales |
+|---|-----------|---------------------|
+| 1 | Inteligencia Artificial | tensorflow, pytorch, machine learning, neural network, gpt |
+| 2 | Base de Datos | mysql, postgresql, mongodb, oracle, sql, database |
+| 3 | Administración de Redes | router, switch, tcp ip, vlan, dns, dhcp, cisco |
+| 4 | Hacking Ético | pentest, metasploit, nmap, cve, vulnerability, owasp |
+| 5 | Tecnologías de Virtualización | docker, kubernetes, vmware, virtualbox, hypervisor |
+| 6 | Tecnologías en la Nube | aws, azure, gcp, cloud, lambda, serverless |
+| 7 | Taller de Investigación | tesis, metodología, hipótesis, investigación |
+| 8 | Programación Lógica y Funcional | prolog, haskell, lisp, lambda, functional |
+| 9 | Desarrollo Web | angular, react, vue, html, css, javascript, nodejs |
+| 10 | Desarrollo Móvil | android, ios, kotlin, flutter, swift, react native |
+| 11 | Desarrollo de Software | scrum, agile, uml, testing, git, refactoring |
+| 12 | Ciberseguridad | ciberseguridad, firewall, criptografía, oauth, seguridad |
+| 13 | Ciencia de Datos | pandas, big data, hadoop, spark, tableau |
+| 14 | Arquitectura de Computadoras | cpu, gpu, assembly, register, pipeline |
+| 15 | Sistemas Operativos | kernel, linux, ubuntu, bash, shell, process |
+| 16 | Matemáticas Discretas | grafo, bfs, dfs, dijkstra, boolean |
+| 17 | Estadística | media, varianza, probabilidad, correlación |
 
 ---
 
-Si quieres, el siguiente paso puede ser uno de estos:
+**FileMaster v2.0** - IA Avanzada para organización inteligente de archivos.
 
-- preparar un instalador para Windows;
-- conectar una IA semantica real;
-- documentar cada modulo interno con docstrings mas detallados;
-- generar una guia de despliegue final para entregar el proyecto. 
+```bash
+# Ejecución rápida
+python -m unittest discover -s tests -v
+python main.py
+```
